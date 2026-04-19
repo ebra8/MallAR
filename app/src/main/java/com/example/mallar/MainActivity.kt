@@ -9,11 +9,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -22,10 +21,30 @@ import com.example.mallar.ui.theme.MallARTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+
+        // ✅ تثبيت Splash
+        val splashScreen = installSplashScreen()
+
+        // ✅ متغير يتحكم في اختفاء السبلاش
+        var isReady = false
+
         super.onCreate(savedInstanceState)
+
+        // ✅ خلي الـ Splash تفضل لحد ما Compose تجهز
+        splashScreen.setKeepOnScreenCondition {
+            !isReady
+        }
+
         enableEdgeToEdge()
+
         setContent {
             MallARTheme {
+
+                // ✅ أول ما Compose تشتغل -> نخفي السبلاش
+                LaunchedEffect(Unit) {
+                    isReady = true
+                }
+
                 Surface(modifier = Modifier.fillMaxSize()) {
                     MallARNavGraph(applicationContext)
                 }
@@ -34,17 +53,21 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/**
- * Navigation graph for the entire MallAR app.
- */
 @Composable
 fun MallARNavGraph(context: Context) {
     val navController = rememberNavController()
-    val prefs: SharedPreferences = remember { context.getSharedPreferences("mallar_prefs", Context.MODE_PRIVATE) }
-    val isFirstLaunch = remember { mutableStateOf(prefs.getBoolean("is_first_launch", true)) }
+    val prefs: SharedPreferences =
+        remember { context.getSharedPreferences("mallar_prefs", Context.MODE_PRIVATE) }
+
+    val isFirstLaunch = remember {
+        mutableStateOf(prefs.getBoolean("is_first_launch", true))
+    }
 
     fun checkPermissionsGranted(): Boolean {
-        val cameraPermission = ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA)
+        val cameraPermission = ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.CAMERA
+        )
         return cameraPermission == PackageManager.PERMISSION_GRANTED
     }
 
@@ -61,7 +84,6 @@ fun MallARNavGraph(context: Context) {
                             popUpTo("splash") { inclusive = true }
                         }
                     } else {
-                        // Returning user: check permissions
                         if (checkPermissionsGranted()) {
                             navController.navigate("logo_scan") {
                                 popUpTo("splash") { inclusive = true }
@@ -82,10 +104,9 @@ fun MallARNavGraph(context: Context) {
                     navController.navigate("phone_auth")
                 },
                 onSkipClick = {
-                    // User skipped: they are no longer in "first launch" mode
                     isFirstLaunch.value = false
                     prefs.edit().putBoolean("is_first_launch", false).apply()
-                    
+
                     if (checkPermissionsGranted()) {
                         navController.navigate("logo_scan") {
                             popUpTo("welcome") { inclusive = true }
@@ -171,8 +192,6 @@ fun MallARNavGraph(context: Context) {
             SettingsScreen(
                 onBackClick = { navController.popBackStack() },
                 onLogoutClick = {
-                    // Optional: Reset first launch on logout for testing, 
-                    // or just go back to welcome.
                     navController.navigate("welcome") {
                         popUpTo(0) { inclusive = true }
                     }

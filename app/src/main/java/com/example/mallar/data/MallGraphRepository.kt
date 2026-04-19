@@ -60,6 +60,12 @@ object MallGraphRepository {
     fun nodeForShop(graph: MallGraph, shopId: Int): GraphNode? =
         graph.nodes.firstOrNull { it.shopId == shopId }
 
+    /** Look up a GraphNode from the path's nodeIds list by sequential index */
+    fun nodeAtPathIndex(graph: MallGraph, path: AStarPath, index: Int): GraphNode? {
+        val nodeId = path.nodeIds.getOrNull(index) ?: return null
+        return graph.nodes.firstOrNull { it.id == nodeId }
+    }
+
     // ── Public A* entry point ────────────────────────────────────────────────
 
     fun aStar(graph: MallGraph, startShopId: Int, endShopId: Int): AStarPath? {

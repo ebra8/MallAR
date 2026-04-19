@@ -50,7 +50,7 @@ fun SplashScreen(
         // Logo Entrance
         logoAlpha.animateTo(1f, animationSpec = tween(1000))
         logoScale.animateTo(1f, animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow))
-        
+
         // Background elements entrance
         delay(200)
         contentAlpha.animateTo(1f, animationSpec = tween(800))

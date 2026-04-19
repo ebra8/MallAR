@@ -6,9 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.mallar"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.mallar"
@@ -59,6 +57,8 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.core.splashscreen)
+    implementation("io.github.sceneview:arsceneview:2.2.1")
 
     // CameraX
     implementation(libs.androidx.camera.core)
