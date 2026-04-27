@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -29,6 +30,9 @@ import com.example.mallar.ar.configureArSessionForNavigation
 import com.example.mallar.ar.ArrowSceneManager
 import com.example.mallar.data.AStarDirection
 import com.example.mallar.data.GraphNode
+import com.example.mallar.voice.NavigationLanguage
+import com.example.mallar.voice.NavigationVoiceController
+import com.example.mallar.voice.VoiceManager
 import com.google.ar.core.*
 import io.github.sceneview.ar.ARSceneView
 import kotlinx.coroutines.delay
@@ -40,12 +44,14 @@ private val NavTealDark = Color(0xFF00695C)
 private val NavGreen    = Color(0xFF43A047)
 
 /** Rough pixel→metre scale for distance/time estimation */
-private const val PX_TO_M   = 0.08f
-private const val M_PER_MIN = 80f   // comfortable mall walking speed
+private const val PX_TO_M   = 0.05f
+private const val M_PER_MIN = 80f
 
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun ArNavigationScreen(onBackClick: () -> Unit) {
+
+    val context = LocalContext.current
 
     // ── Path data ─────────────────────────────────────────────────────────────
     val pathNodes = remember {
@@ -64,6 +70,23 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
         (distanceM / M_PER_MIN).coerceAtLeast(1f).roundToInt()
     }
 
+    // ── Voice system ──────────────────────────────────────────────────────────
+    val voiceManager   = remember { VoiceManager(context) }
+    val voiceCtrl      = remember { NavigationVoiceController(voiceManager) }
+    var voiceEnabled   by remember { mutableStateOf(true) }
+    var voiceReady     by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        voiceManager.init(
+            language = NavigationLanguage.ARABIC,
+            onReady  = {
+                voiceReady = true
+                voiceCtrl.onPathLoaded(pathNodes, aStarPath, speakGreeting = true)
+            }
+        )
+    }
+    LaunchedEffect(voiceEnabled) { voiceManager.isEnabled = voiceEnabled }
+
     // ── UI state ──────────────────────────────────────────────────────────────
     var statusText          by remember { mutableStateOf("📷 Point at the floor and move slowly…") }
     var segmentIndex        by remember { mutableIntStateOf(0) }
@@ -72,7 +95,11 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
     var reachedNotification by remember { mutableStateOf<String?>(null) }
     val managerRef = remember { mutableStateOf<ArrowSceneManager?>(null) }
 
-    // Auto-dismiss reached banner after 2.5 s
+    val camArXRef  = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val camArZRef  = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val anchorMapX = remember { pathNodes.firstOrNull()?.x ?: 0.0 }
+    val anchorMapY = remember { pathNodes.firstOrNull()?.y ?: 0.0 }
+
     LaunchedEffect(reachedNotification) {
         if (reachedNotification != null) {
             delay(2500)
@@ -83,7 +110,7 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
     // ── Root layout ───────────────────────────────────────────────────────────
     Box(modifier = Modifier.fillMaxSize()) {
 
-        // ── AR view (full screen background) ──────────────────────────────────
+        // ── AR view ───────────────────────────────────────────────────────────
         AndroidView(
             factory = { ctx ->
                 ARSceneView(ctx).apply {
@@ -108,7 +135,7 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
                                         .firstOrNull {
                                             it.trackingState == TrackingState.TRACKING &&
                                                     it.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
-                                                    it.extentX > 0.5f
+                                                    it.extentX > 0.3f && it.extentZ > 0.3f
                                         }
                                     if (floorPlane == null) {
                                         statusText = "👀 Scanning floor… move phone slowly"
@@ -123,7 +150,7 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
                                                     t.isPoseInPolygon(h.hitPose)
                                         }
                                     if (hit == null) {
-                                        statusText = "⚠️ Point camera center at the floor"
+                                        statusText = "⚠️ Point camera centre at the floor"
                                         return
                                     }
                                     if (pathNodes.size >= 2) {
@@ -142,9 +169,28 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
                                         statusText = "❌ No navigation path loaded"
                                     }
                                 } else {
+                                    val camPose    = frame.camera.pose
+                                    val anchorPose = manager.rootAnchorPose
+                                    val cX = if (anchorPose != null) camPose.tx() - anchorPose.tx() else camPose.tx()
+                                    val cZ = if (anchorPose != null) camPose.tz() - anchorPose.tz() else camPose.tz()
+                                    camArXRef.floatValue = cX
+                                    camArZRef.floatValue = cZ
+
+                                    voiceCtrl.update(
+                                        camArX           = cX,
+                                        camArZ           = cZ,
+                                        currentTargetIdx = segmentIndex,
+                                        anchorMapX       = anchorMapX,
+                                        anchorMapY       = anchorMapY
+                                    )
+
                                     manager.onFrame(frame, segmentIndex) { reachedIdx ->
                                         val nodeName = pathNodes.getOrNull(reachedIdx)
                                             ?.shopName ?: "Node $reachedIdx"
+                                        voiceCtrl.onTargetIndexChanged(reachedIdx, pathNodes, aStarPath)
+                                        if (nodeName != pathNodes.lastOrNull()?.shopName) {
+                                            voiceCtrl.announceWaypoint(nodeName)
+                                        }
                                         segmentIndex = reachedIdx
                                         reachedNotification = if (reachedIdx >= pathNodes.size - 1) {
                                             statusText = "🏁 You have arrived!"
@@ -166,11 +212,11 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
                     onSessionUpdated = { session, frame -> handleFrame(session, frame) }
                 }
             },
-            update = { /* AR session drives itself */ },
+            update = { },
             modifier = Modifier.fillMaxSize()
         )
 
-        // ── TOP: back button + target button + store card ─────────────────────
+        // ── TOP: back + map buttons + store card ──────────────────────────────
         Column(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -182,7 +228,7 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // ← Back button (white circle)
+                // ← Back button
                 Box(
                     modifier = Modifier
                         .size(42.dp)
@@ -199,7 +245,7 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
                     )
                 }
 
-                // ⊙ Target button (teal circle)
+                // Map button
                 Box(
                     modifier = Modifier
                         .size(42.dp)
@@ -218,7 +264,6 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
 
             Spacer(Modifier.height(12.dp))
 
-            // ── Store info card ──────────────────────────────────────────────
             AnimatedVisibility(
                 visible = showStoreCard && destinationNode != null,
                 enter = fadeIn(tween(300)) + expandVertically(tween(300)),
@@ -236,7 +281,7 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
             }
         }
 
-        // ── CENTER: Waypoint reached notification ─────────────────────────────
+        // ── CENTER: Waypoint notification ─────────────────────────────────────
         AnimatedVisibility(
             visible  = reachedNotification != null,
             modifier = Modifier.align(Alignment.Center),
@@ -260,7 +305,76 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
             }
         }
 
-        // ── BOTTOM: action button + "Show Road →" ────────────────────────────
+        // ── FIX 1: Voice FAB — properly anchored bottom-start ─────────────────
+        // Positioned ABOVE the bottom action bar using padding
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .navigationBarsPadding()
+                .padding(start = 20.dp, bottom = 120.dp)  // enough to clear the bottom buttons
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // "Voice ON" indicator chip — sits ABOVE the FAB
+                AnimatedVisibility(
+                    visible = voiceEnabled && voiceReady,
+                    enter   = fadeIn(tween(250)),
+                    exit    = fadeOut(tween(250))
+                ) {
+                    Surface(
+                        shape  = RoundedCornerShape(50),
+                        color  = NavTeal.copy(alpha = 0.92f),
+                        shadowElevation = 4.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.VolumeUp,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = if (voiceManager.language == NavigationLanguage.ARABIC) "صوت مفعّل" else "Voice ON",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+
+                // Mic FAB — this is the icon, no extra label leaking outside
+                FloatingActionButton(
+                    onClick = {
+                        voiceEnabled = !voiceEnabled
+                        if (voiceEnabled) {
+                            voiceCtrl.onTargetIndexChanged(segmentIndex, pathNodes, aStarPath)
+                        } else {
+                            voiceManager.stop()
+                        }
+                    },
+                    containerColor = if (voiceEnabled) NavTeal else Color(0xFF616161),
+                    contentColor   = Color.White,
+                    shape          = CircleShape,
+                    elevation      = FloatingActionButtonDefaults.elevation(6.dp),
+                    modifier       = Modifier.size(52.dp)
+                ) {
+                    Icon(
+                        imageVector = if (voiceEnabled) Icons.Default.Mic else Icons.Default.MicOff,
+                        contentDescription = if (voiceEnabled) "Mute voice" else "Enable voice",
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+        }
+
+        // ── BOTTOM: direction button + Show Road toggle ───────────────────────
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -268,7 +382,6 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
                 .padding(bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Teal direction / action button
             if (pathNodes.size >= 2) {
                 val nextNode = pathNodes.getOrNull(segmentIndex + 1)
                 val step     = aStarPath?.steps?.getOrNull(segmentIndex)
@@ -279,7 +392,7 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
                     else -> "▲  Head to ${nextNode?.shopName ?: "Next Stop"}"
                 }
                 Button(
-                    onClick  = { /* informational */ },
+                    onClick  = { },
                     shape    = RoundedCornerShape(24.dp),
                     colors   = ButtonDefaults.buttonColors(containerColor = NavTeal),
                     elevation = ButtonDefaults.buttonElevation(4.dp),
@@ -294,20 +407,26 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
                 Spacer(Modifier.height(14.dp))
             }
 
-            // "Show Road →" tap row
+            // FIX 2: "Show Road" row — clicking when open now CLOSES the sheet
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(20.dp))
-                    .clickable { showRouteSheet = !showRouteSheet }
+                    .clickable { showRouteSheet = !showRouteSheet }  // toggles both open AND close
                     .background(Color.Black.copy(alpha = 0.45f))
                     .padding(horizontal = 20.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Show Road", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    text = if (showRouteSheet) "Hide Road" else "Show Road",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                )
                 Spacer(Modifier.width(6.dp))
                 Icon(
+                    // Arrow points DOWN when sheet is open (to indicate it will close)
                     imageVector = if (showRouteSheet) Icons.Default.KeyboardArrowDown
-                                  else Icons.Default.ArrowForward,
+                    else Icons.Default.ArrowForward,
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(18.dp)
@@ -315,7 +434,7 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
             }
         }
 
-        // ── BOTTOM SHEET: route detail ────────────────────────────────────────
+        // ── Route sheet ───────────────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showRouteSheet,
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -323,27 +442,29 @@ fun ArNavigationScreen(onBackClick: () -> Unit) {
             exit     = slideOutVertically(tween(300)) { it }
         ) {
             RouteSheet(
-                pathNodes   = pathNodes,
-                aStarPath   = aStarPath,
-                segmentIndex = segmentIndex,
-                distanceM   = distanceM,
-                walkMinutes = walkMinutes,
+                pathNodes       = pathNodes,
+                aStarPath       = aStarPath,
+                segmentIndex    = segmentIndex,
+                distanceM       = distanceM,
+                walkMinutes     = walkMinutes,
+                onClose         = { showRouteSheet = false },   // FIX 2: close button inside sheet
                 onEndNavigation = onBackClick
             )
         }
     }
 
-    // ── Cleanup ───────────────────────────────────────────────────────────────
     DisposableEffect(Unit) {
         onDispose {
             managerRef.value?.destroy()
             managerRef.value = null
+            voiceCtrl.reset()
+            voiceManager.shutdown()
         }
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Store info card  (top white card matching the mockup)
+// Store info card
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun StoreInfoCard(
@@ -363,7 +484,6 @@ private fun StoreInfoCard(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Logo — must use the android_asset URI scheme for Coil
             if (node.logo != null) {
                 AsyncImage(
                     model             = "file:///android_asset/${node.logo}",
@@ -386,7 +506,6 @@ private fun StoreInfoCard(
             }
 
             Spacer(Modifier.width(12.dp))
-
             Column(Modifier.weight(1f)) {
                 Text(
                     text       = node.shopName ?: "Destination",
@@ -404,8 +523,6 @@ private fun StoreInfoCard(
                 }
                 Text(statusText, fontSize = 11.sp, color = Color.Gray, maxLines = 1)
             }
-
-            // ✕ close
             IconButton(onClick = onClose, modifier = Modifier.size(34.dp)) {
                 Icon(Icons.Default.Close, null, tint = Color.Gray, modifier = Modifier.size(18.dp))
             }
@@ -414,7 +531,7 @@ private fun StoreInfoCard(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Route sheet  (slide-up panel matching the right mockup screen)
+// Route sheet — FIX 2: Added onClose param + close button in header
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun RouteSheet(
@@ -423,6 +540,7 @@ private fun RouteSheet(
     segmentIndex: Int,
     distanceM: Int,
     walkMinutes: Int,
+    onClose: () -> Unit,           // ← NEW: close/hide the sheet without ending navigation
     onEndNavigation: () -> Unit
 ) {
     val destination = pathNodes.lastOrNull()
@@ -441,17 +559,38 @@ private fun RouteSheet(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 20.dp)
         ) {
-            // Drag handle
-            Box(
-                Modifier
-                    .width(40.dp)
-                    .height(4.dp)
-                    .background(Color(0xFFDDDDDD), CircleShape)
-                    .align(Alignment.CenterHorizontally)
-            )
-            Spacer(Modifier.height(16.dp))
+            // Drag handle + close button row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Spacer on left to balance
+                Spacer(Modifier.size(32.dp))
 
-            // Destination name
+                // Drag handle centred
+                Box(
+                    Modifier
+                        .width(40.dp)
+                        .height(4.dp)
+                        .background(Color(0xFFDDDDDD), CircleShape)
+                )
+
+                // FIX 2: ✕ close button — hides sheet WITHOUT ending navigation
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close route panel",
+                        tint = Color.Gray,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+
             Text(
                 text       = destination?.shopName ?: "Destination",
                 fontSize   = 22.sp,
@@ -460,7 +599,6 @@ private fun RouteSheet(
             )
             Spacer(Modifier.height(4.dp))
 
-            // Floor + walk time
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("1st Floor", fontSize = 14.sp, color = Color.Gray)
                 Text("  |  ${walkMinutes} min walk", fontSize = 14.sp, color = Color.Gray)
@@ -472,7 +610,6 @@ private fun RouteSheet(
             HorizontalDivider(color = Color(0xFFEEEEEE))
             Spacer(Modifier.height(16.dp))
 
-            // Step list
             steps.forEachIndexed { i, step ->
                 RouteStepRow(
                     step       = step,
@@ -486,7 +623,7 @@ private fun RouteSheet(
 
             Spacer(Modifier.height(24.dp))
 
-            // End Navigation button
+            // End Navigation — this DOES go back
             Button(
                 onClick  = onEndNavigation,
                 modifier = Modifier
@@ -507,7 +644,7 @@ private fun RouteSheet(
 private data class StepItem(
     val label: String,
     val isWaypoint: Boolean,
-    val nodeIndex: Int?          // non-null for waypoints
+    val nodeIndex: Int?
 )
 
 @Composable
@@ -520,8 +657,6 @@ private fun RouteStepRow(
     showLine: Boolean
 ) {
     Row(modifier = Modifier.fillMaxWidth()) {
-
-        // Dot + vertical line column
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.width(24.dp)
@@ -533,16 +668,15 @@ private fun RouteStepRow(
                         .clip(CircleShape)
                         .background(
                             when {
-                                isFirst  -> NavGreen
-                                isPassed -> NavTeal
+                                isFirst   -> NavGreen
+                                isPassed  -> NavTeal
                                 isCurrent -> NavTeal
-                                isLast   -> Color(0xFFBDBDBD)
-                                else     -> Color(0xFFBDBDBD)
+                                isLast    -> Color(0xFFBDBDBD)
+                                else      -> Color(0xFFBDBDBD)
                             }
                         )
                 )
             } else {
-                // Instruction — small dot
                 Box(
                     modifier = Modifier
                         .size(6.dp)
@@ -561,7 +695,6 @@ private fun RouteStepRow(
         }
 
         Spacer(Modifier.width(14.dp))
-
         Column(modifier = Modifier.padding(bottom = 4.dp)) {
             if (step.isWaypoint && isFirst) {
                 Text("Your Location", fontSize = 10.sp, color = NavGreen, fontWeight = FontWeight.SemiBold)
@@ -582,9 +715,7 @@ private fun RouteStepRow(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Build step list: uses ONLY the REAL A* computed path.
-//   - Named stores → waypoint rows (coloured dot)
-//   - A* direction instructions → direction rows (small dot), interleaved correctly
+// Build step list from real A* path
 // ─────────────────────────────────────────────────────────────────────────────
 private fun buildStepItems(
     pathNodes: List<GraphNode>,
@@ -596,22 +727,16 @@ private fun buildStepItems(
     val instructions = (aStarPath?.steps ?: emptyList())
         .filter { it.direction != AStarDirection.ARRIVED }
 
-    // ── Always show start node ────────────────────────────────────────────────
     items += StepItem(
         label      = pathNodes[0].shopName ?: "Start",
         isWaypoint = true,
         nodeIndex  = 0
     )
 
-    // ── Walk through every instruction in A* order ────────────────────────────
-    // Each NavInstruction covers a subset of pathNodes starting at [nodeIndex].
-    // We interleave any named stores that appear BEFORE the next instruction.
     instructions.forEachIndexed { instrIdx, instr ->
         val nextInstrNodeIdx = instructions.getOrNull(instrIdx + 1)?.nodeIndex
             ?: pathNodes.size - 1
 
-        // Named stores that sit between this instruction's nodeIndex and the
-        // start of the NEXT instruction (exclusive) — show them first
         for (ni in instr.nodeIndex + 1 until nextInstrNodeIdx) {
             val n = pathNodes.getOrNull(ni) ?: continue
             if (n.shopName != null) {
@@ -619,7 +744,6 @@ private fun buildStepItems(
             }
         }
 
-        // Direction step for this instruction
         val distM = (instr.distancePx * PX_TO_M).roundToInt().coerceAtLeast(1)
         val dirText = when (instr.direction) {
             AStarDirection.LEFT     -> "↰  Turn Left"
@@ -632,7 +756,6 @@ private fun buildStepItems(
         }
     }
 
-    // Named stores after the last instruction (before destination)
     val lastInstrNodeIdx = instructions.lastOrNull()?.nodeIndex ?: 0
     for (ni in lastInstrNodeIdx + 1 until pathNodes.size - 1) {
         val n = pathNodes.getOrNull(ni) ?: continue
@@ -641,7 +764,6 @@ private fun buildStepItems(
         }
     }
 
-    // ── Always show destination ───────────────────────────────────────────────
     if (pathNodes.size >= 2) {
         items += StepItem(
             label      = pathNodes.last().shopName ?: "Destination",

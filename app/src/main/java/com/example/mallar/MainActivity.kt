@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
 
         // ✅ تثبيت Splash
-        val splashScreen = installSplashScreen()
+
 
         // ✅ متغير يتحكم في اختفاء السبلاش
         var isReady = false
@@ -31,22 +31,20 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         // ✅ خلي الـ Splash تفضل لحد ما Compose تجهز
-        splashScreen.setKeepOnScreenCondition {
-            !isReady
-        }
 
-        enableEdgeToEdge()
+
+
 
         setContent {
             MallARTheme {
 
                 // ✅ أول ما Compose تشتغل -> نخفي السبلاش
                 LaunchedEffect(Unit) {
-                    isReady = true
+                    isReady = false
                 }
 
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    MallARNavGraph(applicationContext)
+                    MallARNavGraph(this)
                 }
             }
         }
@@ -74,7 +72,8 @@ fun MallARNavGraph(context: Context) {
     NavHost(
         navController = navController,
         startDestination = "splash"
-    ) {
+    )
+    {
         composable("splash") {
             SplashScreen(
                 isFirstLaunch = isFirstLaunch.value,

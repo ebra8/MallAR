@@ -4,26 +4,27 @@
 
     <!-- Main Theme -->
     <style name="Theme.MallAR" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:statusBarColor">#1A8C8C</item>
-        <item name="android:navigationBarColor">#1A8C8C</item>
-        <item name="android:windowBackground">#1A8C8C</item>
-    </style>
-
-    <!-- Perfect Splash Theme -->
-    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
-
-        <!-- نفس لون التطبيق -->
-        <item name="windowSplashScreenBackground">#1A8C8C</item>
-
-        <!-- نفس اللوجو -->
-        <item name="windowSplashScreenAnimatedIcon">@drawable/logo_main</item>
-
-        <!-- سرعة الظهور -->
-        <item name="windowSplashScreenAnimationDuration">200</item>
-
-        <!-- يرجع للثيم الأساسي -->
+        <item name="android:windowIsTranslucent">true</item>
         <item name="postSplashScreenTheme">@style/Theme.MallAR</item>
 
+        <!-- أهم سطر -->
+
     </style>
+    <!-- Perfect Splash Theme -->
+<!--    <style name="Theme.App.Starting" parent="Theme.SplashScreen">-->
+
+<!--        &lt;!&ndash; نفس لون التطبيق &ndash;&gt;-->
+<!--        <item name="windowSplashScreenBackground">#1A8C8C</item>-->
+
+<!--        &lt;!&ndash; نفس اللوجو &ndash;&gt;-->
+<!--        <item name="windowSplashScreenAnimatedIcon">@drawable/logo_main</item>-->
+
+<!--        &lt;!&ndash; سرعة الظهور &ndash;&gt;-->
+<!--        <item name="windowSplashScreenAnimationDuration">200</item>-->
+
+<!--        &lt;!&ndash; يرجع للثيم الأساسي &ndash;&gt;-->
+<!--        <item name="postSplashScreenTheme">@style/Theme.MallAR</item>-->
+
+<!--    </style>-->
 
 </resources>

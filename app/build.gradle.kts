@@ -45,6 +45,7 @@ android {
 }
 
 dependencies {
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -78,6 +79,7 @@ dependencies {
 
     implementation(libs.guava)
     implementation(libs.androidx.concurrent.futures)
+
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

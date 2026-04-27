@@ -1,11 +1,17 @@
 package com.example.mallar.ui.screens
 
+
+
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.util.Log
+import androidx.compose.material.icons.filled.SmartToy
+import com.example.mallar.chat.ChatBottomSheet
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -137,6 +143,8 @@ fun LogoScanScreen(
     var destination    by remember { mutableStateOf<Place?>(null) }
 
     var searchQuery    by remember { mutableStateOf("") }
+    var showChatBot    by remember { mutableStateOf(false) }
+    var chatPath       by remember { mutableStateOf<AStarPath?>(null) }
 
     val latestBitmap   = remember { AtomicReference<Bitmap?>(null) }
 
@@ -632,9 +640,9 @@ fun LogoScanScreen(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text("AR", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = White)
                                 }
-                                
+
                                 Spacer(modifier = Modifier.width(12.dp))
-                                
+
                                 Button(
                                     onClick = {
                                         startNavigation(mallGraph, startPlace, destination, destDistM, onStoreSelected, false)
@@ -731,6 +739,85 @@ fun LogoScanScreen(
                         Text(
                             if (scanState == ScanState.SCANNING) "…" else "Scan",
                             fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = White
+                        )
+                    }
+                }
+            }
+        }
+
+
+        // ── CHATBOT: Floating "Ask me" button — visible on CAMERA_IDLE ──────────
+        AnimatedVisibility(
+            visible  = flow == ScreenFlow.CAMERA_IDLE && scanState == ScanState.IDLE,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(end = 20.dp, bottom = 90.dp),  // sits above the search bar
+            enter = scaleIn(tween(250)) + fadeIn(tween(250)),
+            exit  = scaleOut(tween(200)) + fadeOut(tween(200))
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // "Ask me" label chip
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = Color(0xFF009688).copy(alpha = 0.92f),
+                    shadowElevation = 4.dp
+                ) {
+                    Text(
+                        text = "Ask me!",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+                // FAB
+                FloatingActionButton(
+                    onClick        = { showChatBot = true },
+                    containerColor = Color(0xFF009688),
+                    contentColor   = Color.White,
+                    shape          = CircleShape,
+                    elevation      = FloatingActionButtonDefaults.elevation(6.dp),
+                    modifier       = Modifier.size(56.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SmartToy,
+                        contentDescription = "Open Mall Assistant",
+                        modifier    = Modifier.size(28.dp)
+                    )
+                }
+            }
+        }
+
+        // ── CHATBOT: Bottom sheet dialog ──────────────────────────────────────
+        if (showChatBot) {
+            Dialog(
+                onDismissRequest = { showChatBot = false },
+                properties = DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    dismissOnClickOutside   = true
+                )
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // Tap outside area to dismiss
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable { showChatBot = false }
+                    )
+                    // Sheet at bottom
+                    Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                        ChatBottomSheet(
+                            graph       = mallGraph,
+                            onDismiss   = { showChatBot = false },
+                            onPathFound = { path: AStarPath ->
+                                chatPath = path
+                                // Auto-set navigation state so user can jump straight to AR
+                                NavigationState.aStarPath = path
+                            }
                         )
                     }
                 }
