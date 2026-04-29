@@ -82,7 +82,9 @@ fun configureArSessionForNavigation(session: Session, config: Config) {
     // Detect only horizontal upward-facing planes (the floor).
     // HORIZONTAL includes both up and down; HORIZONTAL_UPWARD_FACING is
     // safer for indoor floor detection.
-    config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
+    // HORIZONTAL only: we only need the floor for navigation hit-tests.
+    // HORIZONTAL_AND_VERTICAL wastes CPU detecting walls we never use.
+    config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
 
     // Environmental HDR provides real-time light estimation so 3-D arrows
     // match the ambient lighting of the mall, making them look grounded.

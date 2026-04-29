@@ -162,7 +162,7 @@ object MallGraphRepository {
     ): List<NavInstruction> {
         if (path.size < 2) return listOf(NavInstruction(AStarDirection.ARRIVED, 0.0, 0))
 
-        val TURN_THRESHOLD = 35.0  // degrees — smaller = more sensitive turns
+        val TURN_THRESHOLD = 45.0  // degrees — 45° gives clean corridor turns without false positives
 
         val instructions = mutableListOf<NavInstruction>()
         var currentDir  = AStarDirection.STRAIGHT
