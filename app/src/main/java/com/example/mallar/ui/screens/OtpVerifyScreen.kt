@@ -14,7 +14,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -77,10 +76,10 @@ fun OtpVerifyScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Logo Centered
+            // logos Centered
             Image(
                 painter = painterResource(id = R.drawable.logo_main),
-                contentDescription = "Logo",
+                contentDescription = "logos",
                 modifier = Modifier
                     .fillMaxWidth(0.55f)
                     .height(140.dp)

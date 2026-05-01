@@ -33,6 +33,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.mallar.data.AStarPath
 import com.example.mallar.data.MallGraph
+import com.example.mallar.data.MallGraphRepository
+import com.example.mallar.data.Place
+import com.example.mallar.ui.screens.NavigationState
 import kotlinx.coroutines.launch
 
 // Design tokens matching the rest of the app
@@ -52,7 +55,8 @@ private val ChatSheetBg    = Color.White
 fun ChatBottomSheet(
     graph: MallGraph?,
     onDismiss: () -> Unit,
-    onPathFound: (AStarPath) -> Unit     // called when a valid path is computed
+    onPathFound: (AStarPath) -> Unit,      // called when a valid path is computed
+    onStartNavigation: ((Boolean) -> Unit)? = null  // true = AR, false = static map
 ) {
     val messages    = remember { mutableStateListOf<ChatMessage>() }
     var inputText   by remember { mutableStateOf("") }
@@ -147,14 +151,42 @@ fun ChatBottomSheet(
             // Run real A* and generate directions
             val result = DirectionsGenerator.generate(g, startNode, destNode, arabic)
 
+            val navPrompt = if (result.path != null) {
+                if (arabic) "\n\n🗺️ اضغط «عرض الخريطة»"
+                else "\n\n🗺️ Press «Show Map»"
+            } else ""
+
             messages += ChatMessage(
                 sender  = MessageSender.BOT,
-                text    = result.responseText,
-                mapPath = result.path
+                text    = result.responseText + navPrompt,
+                mapPath = result.path,
+                action  = if (result.path != null) "SHOW_MAP" else null
             )
 
-            // Propagate path to the home screen map
-            result.path?.let { onPathFound(it) }
+            // Set up full NavigationState so user can jump to AR/Map
+            result.path?.let { path ->
+                val startPlace = Place(
+                    id = startNode.shopId ?: startNode.id,
+                    brand = startNode.shopName ?: "Start",
+                    x = startNode.x.toInt(),
+                    y = startNode.y.toInt(),
+                    logo = startNode.logo ?: ""
+                )
+                val destPlace = Place(
+                    id = destNode.shopId ?: destNode.id,
+                    brand = destNode.shopName ?: "Destination",
+                    x = destNode.x.toInt(),
+                    y = destNode.y.toInt(),
+                    logo = destNode.logo ?: ""
+                )
+                val distM = (path.totalDistancePx * 0.05).toInt().coerceAtLeast(1)
+                NavigationState.startPlace = startPlace
+                NavigationState.selectedPlace = destPlace
+                NavigationState.aStarPath = path
+                NavigationState.estimatedDistance = distM
+                NavigationState.estimatedMinutes = (distM / 80f).coerceIn(1f, 20f).toInt()
+                onPathFound(path)
+            }
 
             isThinking = false
         }
@@ -185,8 +217,9 @@ fun ChatBottomSheet(
                 contentPadding      = PaddingValues(vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(messages, key = { it.id }) { msg ->
-                    ChatBubble(message = msg)
+                items(messages) { msg ->
+                    ChatBubble(message = msg, onStartNavigation = onStartNavigation)
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
                 if (isThinking) {
                     item { ThinkingIndicator() }
@@ -282,7 +315,7 @@ private fun ChatHeader(onDismiss: () -> Unit) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ChatBubble(message: ChatMessage) {
+private fun ChatBubble(message: ChatMessage, onStartNavigation: ((Boolean) -> Unit)? = null) {
     val isUser = message.sender == MessageSender.USER
 
     Column(
@@ -307,7 +340,21 @@ private fun ChatBubble(message: ChatMessage) {
                     )
                 }
                 Spacer(Modifier.width(8.dp))
-                BubbleContent(text = message.text, isUser = false)
+                Column {
+                    BubbleContent(text = message.text, isUser = false)
+                    
+                    if (message.action == "SHOW_MAP" && onStartNavigation != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Button(
+                            onClick = { onStartNavigation(false) },
+                            colors = ButtonDefaults.buttonColors(containerColor = ChatTeal),
+                            modifier = Modifier.padding(start = 4.dp),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("🗺️ Show Map", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
             }
         } else {
             BubbleContent(text = message.text, isUser = true)

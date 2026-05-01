@@ -7,5 +7,5 @@ data class Place(
     @SerializedName("Brand") val brand: String,
     @SerializedName("X") val x: Int,
     @SerializedName("Y") val y: Int,
-    @SerializedName("Logo") val logo: String
+    @SerializedName("logos") val logo: String
 )

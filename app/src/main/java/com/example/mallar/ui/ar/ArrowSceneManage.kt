@@ -19,6 +19,9 @@ private const val ARROW_FLOOR_Y    = 0.05f
 // Number of hit-test poses to average for stable anchor placement
 private const val ANCHOR_SAMPLE_COUNT = 15
 
+// Start/end pin scales
+private const val PIN_SCALE = 0.5f
+
 class ArrowSceneManager(
     private val sceneView:   ARSceneView,
     private val transformer: ArCoordinateTransformer,
@@ -42,16 +45,24 @@ class ArrowSceneManager(
     private var camArX = 0f
     private var camArZ = 0f
 
+    /** Expose camera position for voice controller and other systems */
+    val cameraArX: Float get() = camArX
+    val cameraArZ: Float get() = camArZ
+
     var navigationStarted = false
         private set
 
-    // ── Arrival dedup (Bug 3 fix) ─────────────────────────────────────────────
+    // ── Arrival dedup ─────────────────────────────────────────────────────────
     /** Last node index we already reported to onNodeReached; prevents re-firing
      *  on every AR frame while Compose state is being updated. */
     private var lastReportedNodeIdx = -1
 
     // Track total path distance covered — used to window visible arrows
     private var cameraPathDistance = 0f
+
+    // ── Start/End pin nodes ───────────────────────────────────────────────────
+    private var startPinNode: ModelNode? = null
+    private var endPinNode: ModelNode? = null
 
     // ── Heading alignment ─────────────────────────────────────────────────────
     /** Direction in AR world-space that the FIRST route segment points (degrees).
@@ -202,14 +213,13 @@ class ArrowSceneManager(
         arrows.forEach { try { it.modelNode.destroy() } catch (_: Exception) {} }
         arrows.clear()
         placeArrows(root)
+        placeStartEndPins(root)
         navigationStarted = true
         Log.d(TAG, "Heading offset = $userConfirmedOffsetDeg°. ${arrows.size} arrows placed.")
     }
 
     // ── Per-frame update ──────────────────────────────────────────────────────
     fun onFrame(frame: Frame, currentSegmentIdx: Int, onNodeReached: (Int) -> Unit) {
-        // Bug 5: isWorldOriginSet must be the very first guard so stale (0,0)
-        // camera coordinates are never used in proximity checks.
         if (!isWorldOriginSet) return
         if (!navigationStarted) return
         if (frame.camera.trackingState != TrackingState.TRACKING) return
@@ -255,15 +265,31 @@ class ArrowSceneManager(
         updateArrowVisibility()
 
         // ── Node arrival detection ────────────────────────────────────────────
+        // Check against ALL upcoming nodes, not just the next one.
+        // This prevents getting stuck if the user skips a waypoint.
         if (currentSegmentIdx < pathNodes.size - 1) {
-            val nextIdx = currentSegmentIdx + 1
-            val nextPos = nodeAr.getOrNull(nextIdx) ?: return
-            val dx = camArX - nextPos.x
-            val dz = camArZ - nextPos.z
-            val dist = sqrt(dx * dx + dz * dz)
-            if (dist < ARRIVAL_THRESHOLD_M && nextIdx != lastReportedNodeIdx) {
-                lastReportedNodeIdx = nextIdx
-                onNodeReached(nextIdx)
+            // Find the furthest node within arrival threshold
+            var bestReachIdx = -1
+            for (checkIdx in currentSegmentIdx + 1 until pathNodes.size) {
+                val checkPos = nodeAr.getOrNull(checkIdx) ?: continue
+                val dx = camArX - checkPos.x
+                val dz = camArZ - checkPos.z
+                val dist = sqrt(dx * dx + dz * dz)
+                if (dist < ARRIVAL_THRESHOLD_M) {
+                    bestReachIdx = checkIdx
+                }
+            }
+            if (bestReachIdx > 0 && bestReachIdx != lastReportedNodeIdx) {
+                lastReportedNodeIdx = bestReachIdx
+                onNodeReached(bestReachIdx)
+
+                // Remove start pin when user starts moving
+                if (bestReachIdx >= 1) removeStartPin()
+
+                // Check if arrived at destination
+                if (bestReachIdx >= pathNodes.size - 1) {
+                    removeEndPin()
+                }
             }
         }
     }
@@ -272,6 +298,10 @@ class ArrowSceneManager(
     fun destroy() {
         try { previewNode?.destroy() } catch (_: Exception) {}
         previewNode = null
+        try { startPinNode?.destroy() } catch (_: Exception) {}
+        startPinNode = null
+        try { endPinNode?.destroy() } catch (_: Exception) {}
+        endPinNode = null
         arrows.forEach { try { it.modelNode.destroy() } catch (_: Exception) {} }
         arrows.clear()
         try { rootAnchorNode?.destroy() } catch (_: Exception) {}
@@ -303,12 +333,69 @@ class ArrowSceneManager(
         if (pathNodes.size < 2) return 0f
         val n1 = pathNodes[0]
         val n2 = pathNodes[1]
-        // Use raw map deltas (same convention as computeArrowPlacements)
-        // mapDX = pixel delta X, mapDZ = pixel delta Y (Y increases downward on map)
         val mapDX = (n2.x - n1.x).toFloat() * AR_SCALE
         val mapDZ = (n2.y - n1.y).toFloat() * AR_SCALE
-        // atan2(x, z) gives bearing clockwise from +Z
         return Math.toDegrees(atan2(mapDX.toDouble(), mapDZ.toDouble())).toFloat()
+    }
+
+    /**
+     * Place start and end pin indicators in the AR scene.
+     * Start pin = green-tinted arrow at origin, End pin = red-tinted arrow at destination.
+     */
+    private fun placeStartEndPins(root: AnchorNode) {
+        if (pathNodes.size < 2) return
+
+        // ── Start pin (green) at origin (0,0) ────────────────────────────────
+        try {
+            startPinNode = ModelNode(
+                modelInstance = sceneView.modelLoader.createModelInstance(ARROW_MODEL_PATH),
+                scaleToUnits  = PIN_SCALE
+            ).apply {
+                isEditable = false
+                position = Position(0f, ARROW_FLOOR_Y + 0.3f, 0f)  // Elevated above arrows
+                // Point straight down to indicate "you are here"
+                rotation = Rotation(90f, 0f, 0f)
+                modelInstance.materialInstances.forEach { mat ->
+                    try { mat.setParameter("baseColorFactor", 0.2f, 0.9f, 0.3f, 1f) } // Green
+                    catch (_: Exception) { }
+                }
+            }
+            root.addChildNode(startPinNode!!)
+            Log.d(TAG, "Start pin placed at origin")
+        } catch (e: Exception) {
+            Log.e(TAG, "Start pin failed: ${e.message}")
+        }
+
+        // ── End pin (red) at destination ──────────────────────────────────────
+        val destPos = transformer.toArLocal(pathNodes.last())
+        try {
+            endPinNode = ModelNode(
+                modelInstance = sceneView.modelLoader.createModelInstance(ARROW_MODEL_PATH),
+                scaleToUnits  = PIN_SCALE
+            ).apply {
+                isEditable = false
+                position = Position(destPos.x, ARROW_FLOOR_Y + 0.3f, destPos.z)
+                rotation = Rotation(90f, 0f, 0f)
+                modelInstance.materialInstances.forEach { mat ->
+                    try { mat.setParameter("baseColorFactor", 0.95f, 0.2f, 0.2f, 1f) } // Red
+                    catch (_: Exception) { }
+                }
+            }
+            root.addChildNode(endPinNode!!)
+            Log.d(TAG, "End pin placed at destination")
+        } catch (e: Exception) {
+            Log.e(TAG, "End pin failed: ${e.message}")
+        }
+    }
+
+    private fun removeStartPin() {
+        try { startPinNode?.destroy() } catch (_: Exception) {}
+        startPinNode = null
+    }
+
+    private fun removeEndPin() {
+        try { endPinNode?.destroy() } catch (_: Exception) {}
+        endPinNode = null
     }
 
     private fun placeArrows(root: AnchorNode) {

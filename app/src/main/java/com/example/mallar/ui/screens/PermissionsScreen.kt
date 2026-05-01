@@ -119,7 +119,7 @@ fun PermissionsScreen(onContinueClick: () -> Unit) {
             ) {
                 Image(
                     painter = painterResource(id = R.drawable.logo_main),
-                    contentDescription = "Logo",
+                    contentDescription = "logos",
                     contentScale = ContentScale.FillWidth,
                     modifier = Modifier.fillMaxWidth(0.55f)
                 )

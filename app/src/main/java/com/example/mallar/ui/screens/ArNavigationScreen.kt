@@ -453,7 +453,7 @@ private fun StoreInfoCard(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Logo — must use the android_asset URI scheme for Coil
+            // logos — must use the android_asset URI scheme for Coil
             if (node.logo != null) {
                 AsyncImage(
                     model              = "file:///android_asset/${node.logo}",

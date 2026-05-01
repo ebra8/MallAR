@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import kotlin.math.atan2
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 // ── Graph data structures ────────────────────────────────────────────────────
@@ -56,11 +57,16 @@ object MallGraphRepository {
         val loaded = Gson().fromJson(json, MallGraph::class.java)
         graph = loaded
         loadedGraph = loaded
+        // Validate on load
+        validateGraph(loaded)
         return loaded
     }
 
     fun nodeForShop(graph: MallGraph, shopId: Int): GraphNode? =
         graph.nodes.firstOrNull { it.shopId == shopId }
+
+    fun nodeById(graph: MallGraph, nodeId: Int): GraphNode? =
+        graph.nodes.firstOrNull { it.id == nodeId }
 
     /** Look up a GraphNode from the path's nodeIds list by sequential index */
     fun nodeAtPathIndex(graph: MallGraph, path: AStarPath, index: Int): GraphNode? {
@@ -68,12 +74,67 @@ object MallGraphRepository {
         return graph.nodes.firstOrNull { it.id == nodeId }
     }
 
-    // ── Public A* entry point ────────────────────────────────────────────────
+    /**
+     * Find the nearest graph node to a given position (in map pixel coords).
+     * Used to snap ML-detected locations to the nearest walkable node.
+     */
+    fun findNearestNode(graph: MallGraph, x: Double, y: Double): GraphNode? {
+        return graph.nodes.minByOrNull { node ->
+            val dx = node.x - x; val dy = node.y - y
+            sqrt(dx * dx + dy * dy)
+        }
+    }
+
+    /**
+     * Find the nearest node that has a shopName (a named store/landmark).
+     */
+    fun findNearestShopNode(graph: MallGraph, x: Double, y: Double): GraphNode? {
+        return graph.nodes
+            .filter { it.shopName != null }
+            .minByOrNull { node ->
+                val dx = node.x - x; val dy = node.y - y
+                sqrt(dx * dx + dy * dy)
+            }
+    }
+
+    // ── Graph validation ─────────────────────────────────────────────────────
+
+    private fun validateGraph(graph: MallGraph) {
+        val nodeIds = graph.nodes.map { it.id }.toSet()
+        val connectedIds = mutableSetOf<Int>()
+        var invalidEdges = 0
+
+        for (e in graph.edges) {
+            if (e.from !in nodeIds || e.to !in nodeIds) {
+                invalidEdges++
+                android.util.Log.w("MallGraph", "Invalid edge: ${e.from} → ${e.to}")
+                continue
+            }
+            connectedIds.add(e.from)
+            connectedIds.add(e.to)
+        }
+
+        val disconnected = nodeIds - connectedIds
+        if (disconnected.isNotEmpty()) {
+            android.util.Log.w("MallGraph", "Disconnected nodes: $disconnected")
+        }
+        if (invalidEdges > 0) {
+            android.util.Log.w("MallGraph", "$invalidEdges invalid edges found")
+        }
+        android.util.Log.d("MallGraph", "Graph validated: ${graph.nodes.size} nodes, ${graph.edges.size} edges, $invalidEdges invalid")
+    }
+
+    // ── Public A* entry points ───────────────────────────────────────────────
 
     fun aStar(graph: MallGraph, startShopId: Int, endShopId: Int): AStarPath? {
         val startNode = nodeForShop(graph, startShopId) ?: return null
         val endNode   = nodeForShop(graph, endShopId)   ?: return null
         return runAStar(graph, startNode.id, endNode.id)
+    }
+
+    /** A* using raw node IDs instead of shop IDs */
+    fun aStarByNodeId(graph: MallGraph, startNodeId: Int, endNodeId: Int): AStarPath? {
+        return runAStar(graph, startNodeId, endNodeId)
     }
 
     // ── Core A* with Euclidean edge weights ───────────────────────────────────

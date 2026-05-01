@@ -25,7 +25,7 @@
     <string name="otp_subtitle">We sent a 6-digit code to your phone number.</string>
     <string name="verify">Verify</string>
 
-    <!-- Logo Scan -->
+    <!-- logos Scan -->
     <string name="scan_instruction">Point camera at a store logo to detect your location</string>
 
     <!-- Store Search -->

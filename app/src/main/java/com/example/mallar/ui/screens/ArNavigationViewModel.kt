@@ -106,8 +106,14 @@ class ArNavigationViewModel : ViewModel() {
 
     fun onNodeReached(reachedIdx: Int) {
         val nodes = _uiState.value.pathNodes
+        val path = _uiState.value.aStarPath
+        val currentSeg = _uiState.value.segmentIndex
+
+        // Only advance forward (handles skipped nodes)
+        if (reachedIdx <= currentSeg) return
+
         val nodeName = nodes.getOrNull(reachedIdx)?.shopName ?: "Node $reachedIdx"
-        
+
         val isArrived = reachedIdx >= nodes.size - 1
         val notificationText = if (isArrived) {
             updateStatusText("🏁 You have arrived!")
@@ -116,10 +122,26 @@ class ArNavigationViewModel : ViewModel() {
             "✅ Reached: $nodeName"
         }
 
+        // Compute remaining distance from reachedIdx to end
+        val remainingDistM = if (path != null && reachedIdx < nodes.size - 1) {
+            var remainPx = 0.0
+            for (i in reachedIdx until nodes.size - 1) {
+                val a = nodes.getOrNull(i) ?: continue
+                val b = nodes.getOrNull(i + 1) ?: continue
+                val dx = a.x - b.x; val dy = a.y - b.y
+                remainPx += kotlin.math.sqrt(dx * dx + dy * dy)
+            }
+            (remainPx * DISPLAY_SCALE).roundToInt().coerceAtLeast(1)
+        } else if (isArrived) 0 else _uiState.value.distanceM
+
+        val remainingMins = if (remainingDistM > 0) (remainingDistM / M_PER_MIN).coerceAtLeast(1f).roundToInt() else 0
+
         _uiState.update { currentState ->
             currentState.copy(
                 segmentIndex = reachedIdx,
-                reachedNotification = notificationText
+                reachedNotification = notificationText,
+                distanceM = remainingDistM,
+                walkMinutes = remainingMins
             )
         }
 
@@ -130,7 +152,7 @@ class ArNavigationViewModel : ViewModel() {
                 _uiState.update { it.copy(reachedNotification = null) }
             }
         }
-        
+
         updateInstructionLabel(reachedIdx)
     }
 

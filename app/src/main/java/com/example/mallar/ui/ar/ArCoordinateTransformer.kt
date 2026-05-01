@@ -63,6 +63,69 @@ class ArCoordinateTransformer(
         )
     }
 
+    // ── Node snapping ────────────────────────────────────────────────────────
+    /**
+     * Find the nearest graph node to the given AR camera position.
+     * Returns the index into [pathNodes] and the distance in metres.
+     */
+    fun snapToNearestNode(
+        camArX: Float,
+        camArZ: Float,
+        pathNodes: List<GraphNode>
+    ): Pair<Int, Float> {
+        var bestIdx = 0
+        var bestDist = Float.MAX_VALUE
+        for (i in pathNodes.indices) {
+            val arPos = toArLocal(pathNodes[i])
+            val dx = camArX - arPos.x
+            val dz = camArZ - arPos.z
+            val d = sqrt(dx * dx + dz * dz)
+            if (d < bestDist) {
+                bestDist = d
+                bestIdx = i
+            }
+        }
+        return Pair(bestIdx, bestDist)
+    }
+
+    /**
+     * Find the nearest node from the FULL graph (not just path) to snap
+     * a detected location to the closest walkable node.
+     */
+    fun snapToNearestGraphNode(
+        detectedNode: GraphNode,
+        allNodes: List<GraphNode>
+    ): GraphNode {
+        var bestNode = detectedNode
+        var bestDist = Double.MAX_VALUE
+        for (node in allNodes) {
+            val dx = detectedNode.x - node.x
+            val dy = detectedNode.y - node.y
+            val d = sqrt(dx * dx + dy * dy)
+            if (d < bestDist) {
+                bestDist = d
+                bestNode = node
+            }
+        }
+        return bestNode
+    }
+
+    // ── Map pixel ↔ screen pixel conversion (for StaticMapScreen) ────────────
+    /**
+     * Convert a graph node's map-pixel coordinates to screen coordinates
+     * given the current canvas transform (scale + offset).
+     */
+    fun mapToScreen(
+        node: GraphNode,
+        canvasScale: Float,
+        offsetX: Float,
+        offsetY: Float
+    ): Pair<Float, Float> {
+        val screenX = node.x.toFloat() * canvasScale + offsetX
+        val screenY = node.y.toFloat() * canvasScale + offsetY
+        return Pair(screenX, screenY)
+    }
+
     // ── Compute all arrow placements ─────────────────────────────────────────
     /**
      * Place arrows along the full path using a **direct bearing approach**.

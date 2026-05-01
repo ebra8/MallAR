@@ -17,7 +17,8 @@ data class ChatMessage(
     val id: Long = System.currentTimeMillis(),
     val sender: MessageSender,
     val text: String,
-    val mapPath: AStarPath? = null   // non-null → show mini-map inside this bubble
+    val mapPath: AStarPath? = null,   // non-null → show mini-map inside this bubble
+    val action: String? = null        // e.g. "SHOW_MAP"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@
       "y": 563.0,
       "shopId": 1,
       "shopName": "rosemary",
-      "logo": "logos/Rose Mary.png"
+      "logo": "logos/RoseMary.png"
     },
     {
       "id": 4,
@@ -228,7 +228,7 @@
       "y": 402.0,
       "shopId": 7,
       "shopName": "Desigual",
-      "logo": "logos/desigual.jpg"
+      "logo": "logos/Designual.png"
     },
     {
       "id": 34,
@@ -272,7 +272,7 @@
       "y": 421.0,
       "shopId": 9,
       "shopName": "Eden Park",
-      "logo": "logos/eden-park.jpg"
+      "logo": "logos/EDEN PARK Paris.png"
     },
     {
       "id": 40,
@@ -294,7 +294,7 @@
       "y": 401.0,
       "shopId": 10,
       "shopName": "Adidas Originals",
-      "logo": "logos/adidas-originals.jpg"
+      "logo": "logos/adidas.png"
     },
     {
       "id": 43,
@@ -302,7 +302,7 @@
       "y": 401.0,
       "shopId": 11,
       "shopName": "Adidas Kids",
-      "logo": "logos/adidas-kids.jpg"
+      "logo": "logos/adidas kids.png"
     },
     {
       "id": 44,
@@ -317,7 +317,7 @@
       "y": 401.0,
       "shopId": 12,
       "shopName": "Pinky Lollypop",
-      "logo": "logos/pinky-lollypop.jpg"
+      "logo": "logos/Pinky Lollypop.png"
     },
     {
       "id": 46,
@@ -339,7 +339,7 @@
       "y": 401.0,
       "shopId": 13,
       "shopName": "Moods",
-      "logo": "logos/moods.jpg"
+      "logo": "logos/moods.png"
     },
     {
       "id": 49,
@@ -347,7 +347,7 @@
       "y": 401.0,
       "shopId": 14,
       "shopName": "BCBG",
-      "logo": "logos/bcbgmaxazria.jpg"
+        "logo": "logos/BCBGMAXAZRIA.png"
     },
     {
       "id": 50,
@@ -355,7 +355,7 @@
       "y": 401.0,
       "shopId": 15,
       "shopName": "Perspective",
-      "logo": "logos/perspective.jpg"
+      "logo": "logos/perspective.png"
     },
     {
       "id": 51,
@@ -378,7 +378,7 @@
       "y": 401.0,
       "shopId": 17,
       "shopName": "pronovias",
-      "logo": "logos/pronovias.jpg"
+      "logo": "logos/PRONOVIAS.png"
     },
     {
       "id": 54,
@@ -386,7 +386,7 @@
       "y": 401.0,
       "shopId": 18,
       "shopName": "Femi",
-      "logo": "logos/femi.jpg"
+      "logo": "logos/femi.png"
     },
     {
       "id": 55,
@@ -401,7 +401,7 @@
       "y": 401.0,
       "shopId": 19,
       "shopName": "Pinkberry",
-      "logo": "logos/pinkberry.jpg"
+      "logo": "logos/pinkberry.png"
     },
     {
       "id": 57,
@@ -416,7 +416,7 @@
       "y": 401.0,
       "shopId": 20,
       "shopName": "women'secret",
-      "logo": "logos/women'secret.jpg"
+      "logo": "logos/women'secret.png"
     },
     {
       "id": 59,
@@ -431,7 +431,7 @@
       "y": 409.0,
       "shopId": 21,
       "shopName": "Pepla",
-      "logo": "logos/pepla.jpg"
+      "logo": "logos/pepla.png"
     },
     {
       "id": 61,
@@ -446,7 +446,7 @@
       "y": 432.0,
       "shopId": 22,
       "shopName": "Sherwal",
-      "logo": "logos/sherwal.jpg"
+      "logo": "logos/sherwal.png"
     },
     {
       "id": 63,
@@ -462,7 +462,7 @@
       "y": 431.0,
       "shopId": 24,
       "shopName": "Mounir Nassif",
-      "logo": "logos/mounir-nassif.jpg"
+      "logo": "logos/mounir-nassif.png"
     },
     {
       "id": 65,
@@ -470,7 +470,7 @@
       "y": 413.0,
       "shopId": 25,
       "shopName": "Dubetta",
-      "logo": "logos/dubetta.jpg"
+      "logo": "logos/dubetta.png"
     },
     {
       "id": 66,
@@ -478,7 +478,7 @@
       "y": 393.0,
       "shopId": 26,
       "shopName": "Sixt",
-      "logo": "logos/sixt.jpg"
+      "logo": "logos/sixt.png"
     },
     {
       "id": 67,
@@ -486,7 +486,7 @@
       "y": 369.0,
       "shopId": 27,
       "shopName": "My Secret",
-      "logo": "logos/my-secret.jpg"
+      "logo": "logos/my-secret.png"
     },
     {
       "id": 68,
@@ -501,7 +501,7 @@
       "y": 344.0,
       "shopId": 28,
       "shopName": "Najjaro",
-      "logo": "logos/najjaro.jpg"
+      "logo": "logos/najjaro.png"
     },
     {
       "id": 70,
@@ -509,7 +509,7 @@
       "y": 324.0,
       "shopId": 29,
       "shopName": "Cleo",
-      "logo": "logos/cleo.jpg"
+      "logo": "logos/cleo.png"
     },
     {
       "id": 71,
@@ -532,7 +532,7 @@
       "y": 264.0,
       "shopId": 31,
       "shopName": "Taif Al Emarat",
-      "logo": "logos/taif-al-emarat.jpg"
+      "logo": "logos/taif-al-emarat.png"
     },
     {
       "id": 74,
@@ -540,7 +540,7 @@
       "y": 244.0,
       "shopId": 32,
       "shopName": "Tam's",
-      "logo": "logos/tam's.jpg"
+      "logo": "logos/tam's.png"
     },
     {
       "id": 75,
@@ -613,7 +613,7 @@
       "y": 159.0,
       "shopId": 35,
       "shopName": "Guru",
-      "logo": "logos/guru.jpg"
+      "logo": "logos/guru.png"
     },
     {
       "id": 85,
@@ -644,7 +644,7 @@
       "y": 95.0,
       "shopId": 38,
       "shopName": "American Eagle",
-      "logo": "logos/american-eagle.jpg"
+      "logo": "logos/american eagle.png"
     },
     {
       "id": 89,
@@ -673,7 +673,7 @@
       "y": 141.0,
       "shopId": 39,
       "shopName": "Alsharif Beaute",
-      "logo": "logos/al-sharif-beaute.jpg"
+      "logo": "logos/el sharif beaute.png"
     },
     {
       "id": 93,
@@ -738,7 +738,7 @@
       "y": 202.0,
       "shopId": 41,
       "shopName": "Jimmy Key",
-      "logo": "logos/jimmy-key.jpg"
+      "logo": "logos/jimmy key.png"
     },
     {
       "id": 102,
@@ -753,7 +753,7 @@
       "y": 237.0,
       "shopId": 42,
       "shopName": "Coctail",
-      "logo": "logos/coctail.jpg"
+      "logo": "logos/coctail.png"
     },
     {
       "id": 104,
@@ -761,7 +761,7 @@
       "y": 257.0,
       "shopId": 43,
       "shopName": "Pistage",
-      "logo": "logos/pistage.jpg"
+      "logo": "logos/pistage.png"
     },
     {
       "id": 105,
@@ -769,7 +769,7 @@
       "y": 277.0,
       "shopId": 44,
       "shopName": "Koton",
-      "logo": "logos/koton.jpg"
+      "logo": "logos/koton.png"
     },
     {
       "id": 106,
@@ -791,7 +791,7 @@
       "y": 337.0,
       "shopId": 45,
       "shopName": "La Vie En Rose ",
-      "logo": "logos/la-vie-en-rose.jpg"
+      "logo": "logos/la vie en rose.png"
     },
     {
       "id": 109,
@@ -799,7 +799,7 @@
       "y": 357.0,
       "shopId": 57,
       "shopName": "Carpisa",
-      "logo": "logos/carpisa.jpg"
+      "logo": "logos/carpisa.png"
     },
     {
       "id": 110,
@@ -807,7 +807,7 @@
       "y": 357.0,
       "shopId": 46,
       "shopName": "OMB",
-      "logo": "logos/omb.jpg"
+      "logo": "logos/omb.png"
     },
     {
       "id": 111,
@@ -822,7 +822,7 @@
       "y": 317.0,
       "shopId": 47,
       "shopName": "Marie France",
-      "logo": "logos/marie-france.jpg"
+      "logo": "logos/marie france.png"
     },
     {
       "id": 113,
@@ -830,7 +830,7 @@
       "y": 297.0,
       "shopId": 48,
       "shopName": "Palma",
-      "logo": "logos/palma.jpg"
+      "logo": "logos/palma.png"
     },
     {
       "id": 114,
@@ -838,7 +838,7 @@
       "y": 277.0,
       "shopId": 49,
       "shopName": "Lipsy London",
-      "logo": "logos/lipsy.jpg"
+      "logo": "logos/lipsy london.png"
     },
     {
       "id": 115,
@@ -853,7 +853,7 @@
       "y": 237.0,
       "shopId": 50,
       "shopName": "United Colors Of Benetton",
-      "logo": "logos/united-colors-of-benetton.jpg"
+      "logo": "logos/united colors of benetton.png"
     },
     {
       "id": 117,
@@ -889,7 +889,7 @@
       "y": 202.0,
       "shopId": 51,
       "shopName": "Mii",
-      "logo": "logos/mii.jpg"
+      "logo": "logos/mii.png"
     },
     {
       "id": 122,
@@ -897,7 +897,7 @@
       "y": 202.0,
       "shopId": 52,
       "shopName": "Lacoste",
-      "logo": "logos/lacoste.jpg"
+      "logo": "logos/lacoste.png"
     },
     {
       "id": 123,
@@ -926,7 +926,7 @@
       "y": 244.0,
       "shopId": 53,
       "shopName": "Hijab Boutique",
-      "logo": "logos/hijab-boutique.jpg"
+      "logo": "logos/hijab boutique.png"
     },
     {
       "id": 127,
@@ -934,7 +934,7 @@
       "y": 264.0,
       "shopId": 54,
       "shopName": "New Balance",
-      "logo": "logos/new-balance.jpg"
+      "logo": "logos/new-balance.png"
     },
     {
       "id": 128,
@@ -949,7 +949,7 @@
       "y": 304.0,
       "shopId": 55,
       "shopName": "Pixi",
-      "logo": "logos/pixi.jpg"
+      "logo": "logos/pixi.png"
     },
     {
       "id": 130,
@@ -1006,7 +1006,7 @@
       "y": 384.0,
       "shopId": 56,
       "shopName": "Aldo",
-      "logo": "logos/aldo.jpg"
+      "logo": "logos/aldo.png"
     },
     {
       "id": 138,
@@ -1070,7 +1070,7 @@
       "y": 386.0,
       "shopId": 58,
       "shopName": "BSB",
-      "logo": "logos/bsb.jpg"
+      "logo": "logos/bsb.png"
     },
     {
       "id": 147,
@@ -1078,7 +1078,7 @@
       "y": 386.0,
       "shopId": 59,
       "shopName": "Prima Gold",
-      "logo": "logos/prima-gold.jpg"
+      "logo": "logos/prima gold.png"
     },
     {
       "id": 148,
@@ -1086,7 +1086,7 @@
       "y": 386.0,
       "shopId": 60,
       "shopName": "Luisa Spagnoli",
-      "logo": "logos/luisa-spagnoli.jpg"
+      "logo": "logos/luisa spagnoli.png"
     },
     {
       "id": 149,
@@ -1101,7 +1101,7 @@
       "y": 387.0,
       "shopId": 61,
       "shopName": "HunkeMoller",
-      "logo": "logos/hunkemoller.jpg"
+      "logo": "logos/hunkemoller.png"
     },
     {
       "id": 151,
@@ -1109,7 +1109,7 @@
       "y": 387.0,
       "shopId": 62,
       "shopName": "Gerry Weber",
-      "logo": "logos/gerry-weber.jpg"
+      "logo": "logos/gerry-weber.png"
     },
     {
       "id": 152,
@@ -1132,7 +1132,7 @@
       "y": 386.0,
       "shopId": 64,
       "shopName": "bebe",
-      "logo": "logos/bebe.jpg"
+      "logo": "logos/bebe.png"
     },
     {
       "id": 155,
@@ -1147,7 +1147,7 @@
       "y": 375.0,
       "shopId": 65,
       "shopName": "Marina Rinaldi",
-      "logo": "logos/marina-rinaldi.jpg"
+      "logo": "logos/marina rinaldi.png"
     },
     {
       "id": 157,
@@ -1191,7 +1191,7 @@
       "y": 386.0,
       "shopId": 67,
       "shopName": "Stradivarius",
-      "logo": "logos/stradivarius.jpg"
+      "logo": "logos/stradivarius.png"
     },
     {
       "id": 163,
@@ -1504,7 +1504,7 @@
       "y": 326.0,
       "shopId": 79,
       "shopName": "Twenty Three",
-      "logo": "logos/twenty-three.jpg"
+      "logo": "logos/twenty three.png"
     },
     {
       "id": 206,
@@ -1512,7 +1512,7 @@
       "y": 346.0,
       "shopId": 80,
       "shopName": "ASTK",
-      "logo": "logos/astk.jpg"
+      "logo": "logos/astk.png"
     },
     {
       "id": 207,
@@ -1555,7 +1555,7 @@
       "y": 423.0,
       "shopId": 81,
       "shopName": "Frillu",
-      "logo": "logos/frillu.jpg"
+      "logo": "logos/frillu.png"
     },
     {
       "id": 213,
@@ -1563,7 +1563,7 @@
       "y": 443.0,
       "shopId": 82,
       "shopName": "Seif Pharmacy",
-      "logo": "logos/seif-pharmacy.jpg"
+      "logo": "logos/seif pharmacy.png"
     },
     {
       "id": 214,
@@ -1571,7 +1571,7 @@
       "y": 463.0,
       "shopId": 83,
       "shopName": "SBR",
-      "logo": "logos/sbr.jpg"
+      "logo": "logos/sbr.png"
     },
     {
       "id": 215,
@@ -1586,7 +1586,7 @@
       "y": 503.0,
       "shopId": 84,
       "shopName": "Venti",
-      "logo": "logos/venti.jpg"
+      "logo": "logos/venti.png"
     },
     {
       "id": 217,
@@ -1594,7 +1594,7 @@
       "y": 523.0,
       "shopId": 85,
       "shopName": "Teela",
-      "logo": "logos/teela.jpg"
+      "logo": "logos/teela.png"
     },
     {
       "id": 218,
@@ -1659,7 +1659,7 @@
       "y": 530.0,
       "shopId": 87,
       "shopName": "Doctor M",
-      "logo": "logos/Doctor-M.png"
+      "logo": "logos/Doctor M.png"
     },
     {
       "id": 227,
@@ -2020,7 +2020,7 @@
       "y": 220.0,
       "shopId": 98,
       "shopName": "Nile Eyewear",
-      "logo": "logos/nile-eyewear.jpg"
+      "logo": "logos/nile eyewear.png"
     },
     {
       "id": 277,
@@ -2158,7 +2158,7 @@
       "y": 286.0,
       "shopId": 103,
       "shopName": "DalyDress",
-      "logo": "logos/dalydress.jpg"
+      "logo": "logos/dalydress.png"
     },
     {
       "id": 296,

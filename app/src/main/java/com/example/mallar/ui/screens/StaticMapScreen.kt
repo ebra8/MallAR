@@ -9,8 +9,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,16 +20,22 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.mallar.data.MallGraphRepository
 import com.example.mallar.ui.theme.Teal
+import com.example.mallar.utils.CoordinateTransformer
 import com.example.mallar.ui.theme.White
 import com.example.mallar.ui.theme.RedAccent
+
+private val PathTeal = Color(0xFF00897B)
+private val StartGreen = Color(0xFF43A047)
+private val EndRed = Color(0xFFE53935)
 
 @Composable
 fun StaticMapScreen(onBackClick: () -> Unit) {
@@ -47,8 +52,46 @@ fun StaticMapScreen(onBackClick: () -> Unit) {
 
     var scale by remember { mutableStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    var hasAutoZoomed by remember { mutableStateOf(false) }
+    var isDebugMode by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF121212))) {
+    // Auto-zoom to fit the path on first load
+    val density = LocalDensity.current
+    BoxWithConstraints(modifier = Modifier.fillMaxSize().background(Color(0xFF121212))) {
+        val canvasWidth = with(density) { maxWidth.toPx() }
+        val canvasHeight = with(density) { maxHeight.toPx() }
+
+        // Auto-zoom: compute bounding box of the path and zoom to fit
+        LaunchedEffect(pathData, canvasWidth, canvasHeight) {
+            if (hasAutoZoomed || pathData == null || pathData.nodeIds.size < 2) return@LaunchedEffect
+            val pathCoords = pathData.nodeIds.mapNotNull { nodeMap[it] }
+            if (pathCoords.isEmpty()) return@LaunchedEffect
+
+            val minX = pathCoords.minOf { CoordinateTransformer.transformX(it.x) }
+            val maxX = pathCoords.maxOf { CoordinateTransformer.transformX(it.x) }
+            val minY = pathCoords.minOf { CoordinateTransformer.transformY(it.y) }
+            val maxY = pathCoords.maxOf { CoordinateTransformer.transformY(it.y) }
+
+            val pathW = (maxX - minX).coerceAtLeast(50f)
+            val pathH = (maxY - minY).coerceAtLeast(50f)
+
+            // Add padding (20% on each side)
+            val padFactor = 1.4f
+            val fitScaleX = canvasWidth / (pathW * padFactor)
+            val fitScaleY = canvasHeight / (pathH * padFactor)
+            val fitScale = minOf(fitScaleX, fitScaleY).coerceIn(0.5f, 5f)
+
+            // Center the path
+            val centerX = (minX + maxX) / 2f
+            val centerY = (minY + maxY) / 2f
+            val offX = canvasWidth / 2f - centerX * fitScale
+            val offY = canvasHeight / 2f - centerY * fitScale
+
+            scale = fitScale
+            offset = Offset(offX, offY)
+            hasAutoZoomed = true
+        }
+
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
@@ -65,41 +108,171 @@ fun StaticMapScreen(onBackClick: () -> Unit) {
             }) {
                 // Draw map
                 drawImage(image = mapBitmap)
+                
+                // --- DEBUG MODE ---
+                if (isDebugMode) {
+                    mallGraph.edges.forEach { edge ->
+                        val n1 = nodeMap[edge.from]
+                        val n2 = nodeMap[edge.to]
+                        if (n1 != null && n2 != null) {
+                            val x1 = CoordinateTransformer.transformX(n1.x)
+                            val y1 = CoordinateTransformer.transformY(n1.y)
+                            val x2 = CoordinateTransformer.transformX(n2.x)
+                            val y2 = CoordinateTransformer.transformY(n2.y)
+                            drawLine(
+                                color = Color.Yellow.copy(alpha = 0.5f),
+                                start = Offset(x1, y1),
+                                end = Offset(x2, y2),
+                                strokeWidth = 2f / scale
+                            )
+                        }
+                    }
+                    mallGraph.nodes.forEach { node ->
+                        val nx = CoordinateTransformer.transformX(node.x)
+                        val ny = CoordinateTransformer.transformY(node.y)
+                        drawCircle(
+                            color = if (node.shopId != null) Color.Cyan else Color.Magenta,
+                            radius = 4f / scale,
+                            center = Offset(nx, ny)
+                        )
+                    }
+                }
 
                 // Draw A* path
                 pathData?.let { aStarPath ->
                     if (aStarPath.nodeIds.size >= 2) {
-                        val path = Path()
+                        // Draw path outline (wider, darker) for contrast
+                        val outlinePath = Path()
+                        val mainPath = Path()
                         val firstNode = nodeMap[aStarPath.nodeIds.first()]
                         if (firstNode != null) {
-                            path.moveTo(firstNode.x.toFloat(), firstNode.y.toFloat())
+                            val startX = CoordinateTransformer.transformX(firstNode.x)
+                            val startY = CoordinateTransformer.transformY(firstNode.y)
+                            
+                            outlinePath.moveTo(startX, startY)
+                            mainPath.moveTo(startX, startY)
                             for (i in 1 until aStarPath.nodeIds.size) {
                                 val node = nodeMap[aStarPath.nodeIds[i]]
                                 if (node != null) {
-                                    path.lineTo(node.x.toFloat(), node.y.toFloat())
+                                    val nx = CoordinateTransformer.transformX(node.x)
+                                    val ny = CoordinateTransformer.transformY(node.y)
+                                    outlinePath.lineTo(nx, ny)
+                                    mainPath.lineTo(nx, ny)
                                 }
                             }
+                            // Draw outline
                             drawPath(
-                                path = path,
-                                color = Teal,
-                                style = Stroke(width = 8f / scale, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
-                            )
-
-                            // Start point marker
-                            drawCircle(
-                                color = Teal,
-                                radius = 12f / scale,
-                                center = Offset(firstNode.x.toFloat(), firstNode.y.toFloat())
-                            )
-
-                            // End point marker
-                            val lastNode = nodeMap[aStarPath.nodeIds.last()]
-                            if (lastNode != null) {
-                                drawCircle(
-                                    color = RedAccent,
-                                    radius = 12f / scale,
-                                    center = Offset(lastNode.x.toFloat(), lastNode.y.toFloat())
+                                path = outlinePath,
+                                color = Color(0xFF004D40),
+                                style = Stroke(
+                                    width = 12f / scale,
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                    join = androidx.compose.ui.graphics.StrokeJoin.Round
                                 )
+                            )
+                            // Draw main path
+                            drawPath(
+                                path = mainPath,
+                                color = PathTeal,
+                                style = Stroke(
+                                    width = 7f / scale,
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                    join = androidx.compose.ui.graphics.StrokeJoin.Round
+                                )
+                            )
+
+                            // ── Start marker (green) with white outline ────────────
+                            drawCircle(
+                                color = Color.White,
+                                radius = 16f / scale,
+                                center = Offset(startX, startY)
+                            )
+                            drawCircle(
+                                color = StartGreen,
+                                radius = 12f / scale,
+                                center = Offset(startX, startY)
+                            )
+                            // Inner white dot
+                            drawCircle(
+                                color = Color.White,
+                                radius = 4f / scale,
+                                center = Offset(startX, startY)
+                            )
+
+                            // ── End marker (red) with white outline ────────────────
+                            val lastNode = nodeMap[aStarPath.nodeIds.last()]
+                            var endX = 0f
+                            var endY = 0f
+                            if (lastNode != null) {
+                                endX = CoordinateTransformer.transformX(lastNode.x)
+                                endY = CoordinateTransformer.transformY(lastNode.y)
+                                drawCircle(
+                                    color = Color.White,
+                                    radius = 16f / scale,
+                                    center = Offset(endX, endY)
+                                )
+                                drawCircle(
+                                    color = EndRed,
+                                    radius = 12f / scale,
+                                    center = Offset(endX, endY)
+                                )
+                                // Inner white dot
+                                drawCircle(
+                                    color = Color.White,
+                                    radius = 4f / scale,
+                                    center = Offset(endX, endY)
+                                )
+                            }
+
+                            // ── Draw labels using native canvas ────────────────────
+                            drawContext.canvas.nativeCanvas.apply {
+                                val textPaint = android.graphics.Paint().apply {
+                                    color = android.graphics.Color.WHITE
+                                    textSize = 13f / scale
+                                    isAntiAlias = true
+                                    isFakeBoldText = true
+                                    setShadowLayer(3f / scale, 1f / scale, 1f / scale, android.graphics.Color.BLACK)
+                                }
+                                // Start label
+                                val startLabel = NavigationState.startPlace?.brand ?: "Start"
+                                drawText(startLabel, startX + 18f / scale, startY - 8f / scale, textPaint)
+
+                                // End label
+                                if (lastNode != null) {
+                                    val endLabel = NavigationState.selectedPlace?.brand ?: "Destination"
+                                    drawText(endLabel, endX + 18f / scale, endY - 8f / scale, textPaint)
+                                }
+                            }
+
+                            // ── Direction arrows along path ────────────────────────
+                            for (i in 0 until aStarPath.nodeIds.size - 1) {
+                                val nA = nodeMap[aStarPath.nodeIds[i]] ?: continue
+                                val nB = nodeMap[aStarPath.nodeIds[i + 1]] ?: continue
+                                
+                                val ax = CoordinateTransformer.transformX(nA.x)
+                                val ay = CoordinateTransformer.transformY(nA.y)
+                                val bx = CoordinateTransformer.transformX(nB.x)
+                                val by = CoordinateTransformer.transformY(nB.y)
+                                
+                                val dx = bx - ax
+                                val dy = by - ay
+                                val segLen = kotlin.math.sqrt(dx * dx + dy * dy)
+                                if (segLen < 20f) continue
+                                // Place a small direction indicator at midpoint
+                                val midX = (ax + bx) / 2f
+                                val midY = (ay + by) / 2f
+                                val arrowSize = 6f / scale
+                                val ndx = dx / segLen * arrowSize
+                                val ndy = dy / segLen * arrowSize
+                                val perpX = -ndy * 0.5f
+                                val perpY = ndx * 0.5f
+                                val arrowPath = Path().apply {
+                                    moveTo(midX + ndx, midY + ndy)        // tip
+                                    lineTo(midX - ndx + perpX, midY - ndy + perpY) // left base
+                                    lineTo(midX - ndx - perpX, midY - ndy - perpY) // right base
+                                    close()
+                                }
+                                drawPath(arrowPath, color = Color.White)
                             }
                         }
                     }
@@ -139,6 +312,30 @@ fun StaticMapScreen(onBackClick: () -> Unit) {
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
                     )
                 }
+                Spacer(modifier = Modifier.weight(1f))
+                // Debug button
+                Surface(
+                    onClick = { isDebugMode = !isDebugMode },
+                    modifier = Modifier.size(48.dp),
+                    shape = CircleShape,
+                    color = if (isDebugMode) Teal.copy(alpha = 0.8f) else Color.Black.copy(alpha = 0.6f)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("BUG", color = White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                // Re-center button
+                Surface(
+                    onClick = { hasAutoZoomed = false },
+                    modifier = Modifier.size(48.dp),
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = 0.6f)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.CenterFocusStrong, "Re-center", tint = White)
+                    }
+                }
             }
         }
 
@@ -155,7 +352,12 @@ fun StaticMapScreen(onBackClick: () -> Unit) {
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.MyLocation, contentDescription = null, tint = Teal, modifier = Modifier.size(18.dp))
+                    // Green dot for start
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .background(StartGreen, CircleShape)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         "From: ${NavigationState.startPlace?.brand ?: "Current Location"}",
@@ -164,7 +366,12 @@ fun StaticMapScreen(onBackClick: () -> Unit) {
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Place, contentDescription = null, tint = RedAccent, modifier = Modifier.size(18.dp))
+                    // Red dot for end
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .background(EndRed, CircleShape)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         "To: ${NavigationState.selectedPlace?.brand ?: "Destination"}",

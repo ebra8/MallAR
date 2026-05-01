@@ -165,13 +165,21 @@ fun LogoScanScreen(
         base.filter { it.id != startPlace?.id }
     }
 
-    // Compute destination distance
-    val destDistM = remember(destination) {
+    // Compute destination distance using A* when possible, fallback to Euclidean
+    val destDistM = remember(destination, startPlace, mallGraph) {
         val d = destination ?: return@remember 0
-        val dx = d.x - 319f; val dy = d.y - 227f
-        (kotlin.math.sqrt(dx * dx + dy * dy) * 0.9f).toInt().coerceIn(80, 480)
+        val s = startPlace
+        val g = mallGraph
+        if (s != null && g != null) {
+            val path = MallGraphRepository.aStar(g, s.id, d.id)
+            if (path != null) return@remember (path.totalDistancePx * 0.05).toInt().coerceAtLeast(1)
+        }
+        // Fallback: Euclidean between place coords
+        val dx = (d.x - (s?.x ?: d.x)).toFloat()
+        val dy = (d.y - (s?.y ?: d.y)).toFloat()
+        (kotlin.math.sqrt(dx * dx + dy * dy) * 0.05f).toInt().coerceAtLeast(1)
     }
-    val destMins = remember(destDistM) { (destDistM / 60).coerceIn(2, 10) }
+    val destMins = remember(destDistM) { (destDistM / 80f).coerceIn(1f, 20f).toInt() }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
 
@@ -817,6 +825,10 @@ fun LogoScanScreen(
                                 chatPath = path
                                 // Auto-set navigation state so user can jump straight to AR
                                 NavigationState.aStarPath = path
+                            },
+                            onStartNavigation = { useAr ->
+                                showChatBot = false
+                                onStoreSelected(useAr)
                             }
                         )
                     }
@@ -862,9 +874,9 @@ private fun startNavigation(
         }
         // Use A* path distance for accurate estimates
         val realDistM = if (path != null)
-            (path.totalDistancePx * 0.25).toInt().coerceIn(10, 1500)
+            (path.totalDistancePx * 0.05).toInt().coerceAtLeast(1)
         else destDistM
-        val realMins = (realDistM / 72).coerceIn(1, 20) // 72m/min walking pace
+        val realMins = (realDistM / 80f).coerceIn(1f, 20f).toInt()
 
         NavigationState.selectedPlace     = end
         NavigationState.startPlace        = start
@@ -886,10 +898,11 @@ private fun startNavigation(
 @Composable
 private fun DestinationRow(place: Place, onClick: () -> Unit) {
     val distM = remember(place.id) {
-        val dx = place.x - 319f; val dy = place.y - 227f
-        (kotlin.math.sqrt(dx * dx + dy * dy) * 0.9f).toInt().coerceIn(80, 480)
+        // Simple Euclidean estimate in pixels * scale — will be overridden by A* when navigation starts
+        val dx = place.x.toFloat(); val dy = place.y.toFloat()
+        (kotlin.math.sqrt(dx * dx + dy * dy) * 0.05f).toInt().coerceAtLeast(1)
     }
-    val mins = remember(distM) { (distM / 60).coerceIn(2, 10) }
+    val mins = remember(distM) { (distM / 80f).coerceIn(1f, 10f).toInt() }
 
     Row(
         modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 10.dp),
