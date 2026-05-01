@@ -12,10 +12,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import com.example.mallar.utils.CompassManager
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -27,27 +30,16 @@ import coil.compose.AsyncImage
 import com.example.mallar.ar.ArCoordinateTransformer
 import com.example.mallar.ar.configureArSessionForNavigation
 import com.example.mallar.ar.ArrowSceneManager
-import com.example.mallar.data.AStarDirection
 import com.example.mallar.data.GraphNode
 import android.os.Handler
 import android.os.Looper
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.ar.core.*
 import io.github.sceneview.ar.ARSceneView
-import kotlin.math.roundToInt
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 private val NavTeal     = Color(0xFF009688)
-private val NavTealDark = Color(0xFF00695C)
 private val NavGreen    = Color(0xFF43A047)
-
-/** Scale for DISPLAY distances shown to user (metres).
- *  Must match AR_SCALE in ArCoordinateTransformer (1 px = 5 cm = 0.05 m).
- *  Bug 2 fix: was incorrectly 0.25f, causing all displayed distances to be 5× too large. */
-private const val DISPLAY_SCALE = 0.05f
-/** Scale used in ArCoordinateTransformer for 3D AR world positions (same as DISPLAY_SCALE). */
-private const val PX_TO_M = 0.05f
-private const val M_PER_MIN = 80f     // comfortable mall walking speed
 
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
@@ -56,10 +48,11 @@ fun ArNavigationScreen(
     viewModel: ArNavigationViewModel = viewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+    val compassManager = remember { CompassManager(context) }
 
     // ── Path data ─────────────────────────────────────────────────────────────
     val pathNodes       = state.pathNodes
-    val aStarPath       = state.aStarPath
     val destinationNode = state.destinationNode
     val distanceM       = state.distanceM
     val walkMinutes     = state.walkMinutes
@@ -72,14 +65,17 @@ fun ArNavigationScreen(
     val showRouteSheet      = state.showRouteSheet
     val showStoreCard       = state.showStoreCard
     val reachedNotification = state.reachedNotification
-    val showAlignmentUi     = state.showAlignmentUi
-    val alignmentAngle      = state.alignmentAngle
 
     val managerRef = remember { mutableStateOf<ArrowSceneManager?>(null) }
 
 
     // ── Root layout ───────────────────────────────────────────────────────────
     Box(modifier = Modifier.fillMaxSize()) {
+
+        val segmentIndexRef = remember { mutableIntStateOf(0) }
+        LaunchedEffect(segmentIndex) {
+            segmentIndexRef.intValue = segmentIndex
+        }
 
         // ── AR view (full screen background) ──────────────────────────────────
         AndroidView(
@@ -160,25 +156,19 @@ fun ArNavigationScreen(
                                     }
 
                                     val ready = manager.feedHitSample(hit)
-                                    val pct   = (manager.sampleProgress * 100).roundToInt()
-                                    Handler(Looper.getMainLooper()).post {
-                                        viewModel.updateStatusText("📍 Calibrating… $pct%")
-                                    }
-
                                     if (ready) {
                                         manager.commitAnchor(session, frame)
-                                        manager.showHeadingPreview()
+                                        manager.autoAlignAndStart(compassManager.azimuthDeg, frame.camera)
                                         planeRenderer.isVisible = false
                                         Handler(Looper.getMainLooper()).post {
-                                            viewModel.updateStatusText("🔄 Align the arrow with the hallway")
-                                            viewModel.requestHeadingAlignment()
+                                            viewModel.updateStatusText("🎯 Follow the arrows!")
                                         }
                                     }
                                     return
                                 }
 
                                 // ── Phase 3: track user + update arrows ───────────────────
-                                manager.onFrame(frame, segmentIndex) { reachedIdx ->
+                                manager.onFrame(frame, segmentIndexRef.intValue) { reachedIdx ->
                                     Handler(Looper.getMainLooper()).post {
                                         viewModel.onNodeReached(reachedIdx)
                                     }
@@ -190,11 +180,11 @@ fun ArNavigationScreen(
                             }
 
                             TrackingState.STOPPED -> {
+                                managerRef.value?.destroy()
+                                managerRef.value = null
                                 Handler(Looper.getMainLooper()).post {
                                     viewModel.updateStatusText("❌ AR stopped. Please restart.")
                                 }
-                                managerRef.value?.destroy()
-                                managerRef.value = null
                             }
                         }
                     }
@@ -231,7 +221,7 @@ fun ArNavigationScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.ArrowBack,
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back",
                         tint = Color.Black,
                         modifier = Modifier.size(20.dp)
@@ -307,22 +297,8 @@ fun ArNavigationScreen(
                 .padding(bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (showAlignmentUi) {
-                AlignmentSliderUi(
-                    alignmentAngle = alignmentAngle,
-                    onAngleChange = { newAngle ->
-                        viewModel.updateAlignmentAngle(newAngle)
-                        managerRef.value?.updatePreviewHeading(newAngle)
-                    },
-                    onConfirm = {
-                        viewModel.confirmAlignment()
-                        viewModel.updateStatusText("🎯 Follow the arrows!")
-                        managerRef.value?.applyHeadingAndPlaceArrows(alignmentAngle)
-                    }
-                )
-            } else {
-                // Teal direction / action button
-                if (pathNodes.size >= 2) {
+            // Teal direction / action button
+            if (pathNodes.size >= 2) {
                 Button(
                     onClick  = { /* informational */ },
                     shape    = RoundedCornerShape(24.dp),
@@ -338,7 +314,6 @@ fun ArNavigationScreen(
                 }
                 Spacer(Modifier.height(14.dp))
             }
-            } // close else block
 
             // "Show Road →" tap row
             Row(
@@ -353,7 +328,7 @@ fun ArNavigationScreen(
                 Spacer(Modifier.width(6.dp))
                 Icon(
                     imageVector = if (showRouteSheet) Icons.Default.KeyboardArrowDown
-                    else Icons.Default.ArrowForward,
+                    else Icons.AutoMirrored.Filled.ArrowForward,
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(18.dp)
@@ -381,56 +356,17 @@ fun ArNavigationScreen(
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
     DisposableEffect(Unit) {
+        compassManager.start()
         onDispose {
-            // managerRef.value?.destroy() is removed. ARSceneView's onRelease handles destruction.
+            compassManager.stop()
+            // managerRef.value?.destroy() is INTENTIONALLY REMOVED.
+            // ARSceneView's onRelease handles node destruction on the proper GL thread.
+            // Calling it here on the Main thread causes a native Filament crash.
             managerRef.value = null
         }
     }
 }
 
-@Composable
-private fun AlignmentSliderUi(
-    alignmentAngle: Float,
-    onAngleChange: (Float) -> Unit,
-    onConfirm: () -> Unit
-) {
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(8.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                "Rotate to align arrow with hallway",
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 16.sp,
-                color = Color.Black
-            )
-            Spacer(Modifier.height(16.dp))
-            androidx.compose.material3.Slider(
-                value = alignmentAngle,
-                onValueChange = onAngleChange,
-                valueRange = -180f..180f,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = onConfirm,
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = NavTeal),
-                modifier = Modifier.fillMaxWidth().height(48.dp)
-            ) {
-                Text("Confirm Direction", color = Color.White, fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Store info card  (top white card matching the mockup)

@@ -32,23 +32,26 @@ class ArCoordinateTransformer(
     var headingOffsetDeg: Float = 0f
 ) {
 
+    // ── Auto-alignment with Compass ─────────────────────────────────────────────
+    /**
+     * Automatically computes headingOffsetDeg so the AR map is aligned to the 
+     * real world using the device's hardware compass.
+     */
+    fun autoAlignWithCompass(compassAzimuth: Float, camDirX: Float, camDirZ: Float) {
+        // Camera's CW angle from anchor's -Z axis
+        val camArYawCw = Math.toDegrees(atan2(camDirX.toDouble(), -camDirZ.toDouble())).toFloat()
+        
+        // Let's define the map's north offset. 0 means Map Top (-Y) is True North.
+        // If the Mall map is oriented differently, you can change this offset.
+        val MAP_NORTH_OFFSET_DEG = 0f 
+        
+        headingOffsetDeg = compassAzimuth - camArYawCw - MAP_NORTH_OFFSET_DEG
+    }
+
     // ── Map node → AR local position ─────────────────────────────────────────
     /**
      * Convert a map node to an AR local position.
-     *
-     * Map convention  : X = right, Y = down  (screen/image coordinates)
-     * AR convention   : X = right, Z = away from camera (-Z = forward)
-     *
-     * So:   AR_X = map_ΔX * scale
-     *       AR_Z = map_ΔY * scale      (note: NO negation — explained below)
-     *
-     * When headingOffsetDeg is applied the whole path rotates so the
-     * first segment lines up with the real corridor the user confirmed.
-     *
-     * The rotation uses the STANDARD Y-axis rotation matrix
-     * (CCW positive when viewed from above, right-hand Y-up):
-     *   x' =  rawX * cos(θ) + rawZ * sin(θ)
-     *   z' = -rawX * sin(θ) + rawZ * cos(θ)
+     * Applies headingOffsetDeg to rotate the entire map relative to the anchor.
      */
     fun toArLocal(node: GraphNode): ArPosition {
         val rawX = (node.x.toFloat() - startNode.x.toFloat()) * scale
@@ -63,68 +66,6 @@ class ArCoordinateTransformer(
         )
     }
 
-    // ── Node snapping ────────────────────────────────────────────────────────
-    /**
-     * Find the nearest graph node to the given AR camera position.
-     * Returns the index into [pathNodes] and the distance in metres.
-     */
-    fun snapToNearestNode(
-        camArX: Float,
-        camArZ: Float,
-        pathNodes: List<GraphNode>
-    ): Pair<Int, Float> {
-        var bestIdx = 0
-        var bestDist = Float.MAX_VALUE
-        for (i in pathNodes.indices) {
-            val arPos = toArLocal(pathNodes[i])
-            val dx = camArX - arPos.x
-            val dz = camArZ - arPos.z
-            val d = sqrt(dx * dx + dz * dz)
-            if (d < bestDist) {
-                bestDist = d
-                bestIdx = i
-            }
-        }
-        return Pair(bestIdx, bestDist)
-    }
-
-    /**
-     * Find the nearest node from the FULL graph (not just path) to snap
-     * a detected location to the closest walkable node.
-     */
-    fun snapToNearestGraphNode(
-        detectedNode: GraphNode,
-        allNodes: List<GraphNode>
-    ): GraphNode {
-        var bestNode = detectedNode
-        var bestDist = Double.MAX_VALUE
-        for (node in allNodes) {
-            val dx = detectedNode.x - node.x
-            val dy = detectedNode.y - node.y
-            val d = sqrt(dx * dx + dy * dy)
-            if (d < bestDist) {
-                bestDist = d
-                bestNode = node
-            }
-        }
-        return bestNode
-    }
-
-    // ── Map pixel ↔ screen pixel conversion (for StaticMapScreen) ────────────
-    /**
-     * Convert a graph node's map-pixel coordinates to screen coordinates
-     * given the current canvas transform (scale + offset).
-     */
-    fun mapToScreen(
-        node: GraphNode,
-        canvasScale: Float,
-        offsetX: Float,
-        offsetY: Float
-    ): Pair<Float, Float> {
-        val screenX = node.x.toFloat() * canvasScale + offsetX
-        val screenY = node.y.toFloat() * canvasScale + offsetY
-        return Pair(screenX, screenY)
-    }
 
     // ── Compute all arrow placements ─────────────────────────────────────────
     /**
@@ -139,71 +80,42 @@ class ArCoordinateTransformer(
      * Positions accumulate from segment to segment so the path is continuous.
      */
     fun computeArrowPlacements(pathNodes: List<GraphNode>): List<ArrowPlacement> {
-        if (pathNodes.size < 2) return emptyList()
         val result = mutableListOf<ArrowPlacement>()
-
-        var curX = 0f   // cumulative position along path in AR space
-        var curZ = 0f
+        if (pathNodes.size < 2) return result
 
         for (segIdx in 0 until pathNodes.size - 1) {
-            val n1 = pathNodes[segIdx]
-            val n2 = pathNodes[segIdx + 1]
+            val p1 = toArLocal(pathNodes[segIdx])
+            val p2 = toArLocal(pathNodes[segIdx + 1])
 
-            // Raw delta in map pixel space (Y is downward in map → +Z in AR by convention)
-            val mapDX = (n2.x - n1.x).toFloat() * scale
-            val mapDZ = (n2.y - n1.y).toFloat() * scale
-            val segLen = sqrt(mapDX * mapDX + mapDZ * mapDZ)
+            val dx = p2.x - p1.x
+            val dz = p2.z - p1.z
+            val segLen = sqrt(dx * dx + dz * dz)
             if (segLen < 0.001f) continue
 
-            // ── Bearing in map space, then rotated by the confirmed heading ───
-            // atan2(x, z) gives bearing measured clockwise from +Z (= "south on map")
-            val rawBearingDeg = Math.toDegrees(atan2(mapDX.toDouble(), mapDZ.toDouble())).toFloat()
-            val worldBearingDeg = rawBearingDeg + headingOffsetDeg
-            val worldRad = Math.toRadians(worldBearingDeg.toDouble())
+            val dirX = dx / segLen
+            val dirZ = dz / segLen
 
-            // AR direction for this segment
-            val dirX = sin(worldRad).toFloat()
-            val dirZ = cos(worldRad).toFloat()
+            // Bearing of this segment in AR world space (Filament uses Right-Hand Y-Up)
+            // atan2(-x, -z) perfectly maps a (dirX, dirZ) vector to a Y-axis rotation.
+            val worldBearingDeg = Math.toDegrees(atan2(-dirX.toDouble(), -dirZ.toDouble())).toFloat()
 
-            // Arrow GLB rotation: bearing → model rotation accounting for model's forward axis
-            val arrowRotation = (worldBearingDeg + ARROW_GLB_FORWARD_OFFSET + 360f) % 360f
+            // Arrow GLB rotation: bearing → model rotation
+            val arrowRotation = worldBearingDeg
 
             val arrowCount = (segLen / ARROW_SPACING_M).toInt().coerceAtLeast(1)
             for (k in 0 until arrowCount) {
                 val t = (k + 0.5f) * ARROW_SPACING_M
                 result += ArrowPlacement(
-                    position     = ArPosition(curX + dirX * t, ARROW_Y_OFFSET, curZ + dirZ * t),
+                    position     = ArPosition(p1.x + dirX * t, ARROW_Y_OFFSET, p1.z + dirZ * t),
                     yRotationDeg = arrowRotation,
                     segmentIndex = segIdx
                 )
             }
-
-            // Advance start of next segment
-            curX += dirX * segLen
-            curZ += dirZ * segLen
         }
         return result
     }
 
-    // ── Distance helper ───────────────────────────────────────────────────────
-    fun distanceFromCamera(cameraTx: Float, cameraTz: Float, target: ArPosition): Float {
-        val dx = cameraTx - target.x
-        val dz = cameraTz - target.z
-        return sqrt(dx * dx + dz * dz)
-    }
-
     companion object {
-        /**
-         * nav_arrow.glb forward axis offset.
-         * Standard glTF faces -Z → add 180° so tip points toward travel direction.
-         * Change to 0f / 90f / -90f if your specific GLB is oriented differently.
-         */
-        const val ARROW_GLB_FORWARD_OFFSET = 180f
+        // Constants
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-fun quaternionAroundY(angleDeg: Float): FloatArray {
-    val half = Math.toRadians(angleDeg.toDouble()) / 2.0
-    return floatArrayOf(0f, sin(half).toFloat(), 0f, cos(half).toFloat())
 }

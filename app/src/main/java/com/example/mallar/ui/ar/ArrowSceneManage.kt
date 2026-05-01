@@ -35,8 +35,6 @@ class ArrowSceneManager(
     private val hitSamples = mutableListOf<FloatArray>()  // each = [tx, ty, tz]
     var isCollectingSamples = false
         private set
-    val sampleProgress: Float get() =
-        (hitSamples.size.toFloat() / ANCHOR_SAMPLE_COUNT).coerceIn(0f, 1f)
 
     var isWorldOriginSet = false
         private set
@@ -44,10 +42,6 @@ class ArrowSceneManager(
     // ── Camera tracking ───────────────────────────────────────────────────────
     private var camArX = 0f
     private var camArZ = 0f
-
-    /** Expose camera position for voice controller and other systems */
-    val cameraArX: Float get() = camArX
-    val cameraArZ: Float get() = camArZ
 
     var navigationStarted = false
         private set
@@ -64,12 +58,6 @@ class ArrowSceneManager(
     private var startPinNode: ModelNode? = null
     private var endPinNode: ModelNode? = null
 
-    // ── Heading alignment ─────────────────────────────────────────────────────
-    /** Direction in AR world-space that the FIRST route segment points (degrees).
-     *  Computed once after anchor is placed. */
-    var firstSegmentArBearing = 0f
-        private set
-
     // ── Arrow nodes ───────────────────────────────────────────────────────────
     /**
      * An arrow that has been placed in the scene.
@@ -81,9 +69,8 @@ class ArrowSceneManager(
         val placement:        ArrowPlacement,
         val distanceAlongPath: Float   // metres from path start
     )
-    /** All live arrows. Sorted ascending by [distanceAlongPath]. */
+    /** All live arrows. Sorted ascending by [ArrowEntry.distanceAlongPath]. */
     private val arrows = mutableListOf<ArrowEntry>()
-    private var previewNode: ModelNode? = null
 
     // Node AR positions — computed fresh each call so headingOffset is always current
     private fun nodeArPositions(): List<ArPosition> =
@@ -132,12 +119,9 @@ class ArrowSceneManager(
     /**
      * Average the collected samples and create the anchor.
      * Call this once [feedHitSample] returns true.
-     *
-     * Returns the first-segment bearing so the heading-alignment UI can
-     * draw a reference arrow for the user.
      */
-    fun commitAnchor(session: Session, @Suppress("UNUSED_PARAMETER") frame: Frame): Float {
-        if (isWorldOriginSet || hitSamples.isEmpty()) return 0f
+    fun commitAnchor(session: Session, @Suppress("UNUSED_PARAMETER") frame: Frame) {
+        if (isWorldOriginSet || hitSamples.isEmpty()) return
 
         // Average the hit positions
         val avgTx = hitSamples.map { it[0] }.average().toFloat()
@@ -156,66 +140,32 @@ class ArrowSceneManager(
         isCollectingSamples = false
         isWorldOriginSet = true
 
-        // Compute first-segment AR bearing (BEFORE heading offset is applied)
-        firstSegmentArBearing = computeFirstSegmentBearing()
-        Log.d(TAG, "Anchor committed. First segment bearing = $firstSegmentArBearing°")
-        return firstSegmentArBearing
+        Log.d(TAG, "Anchor committed.")
     }
 
     /**
-     * Show a single arrow at the anchor origin so the user can align it
-     * with the physical corridor before generating the full path.
+     * Automatically calculates the heading to align the first path segment
+     * with the physical forward direction (-Z axis), places all arrows and pins,
+     * and starts navigation tracking.
      */
-    fun showHeadingPreview() {
-        if (previewNode != null) return
+    fun autoAlignAndStart(compassAzimuth: Float, camera: Camera) {
+        val stored = anchorPose ?: return
+        val local = stored.inverse().compose(camera.pose)
+        val zAxis = local.zAxis
+        // local.zAxis returns the +Z axis. The camera looks down -Z.
+        // So the camera's forward vector is (-zAxis[0], -zAxis[1], -zAxis[2])
+        val camDirX = -zAxis[0]
+        val camDirZ = -zAxis[2]
+        
+        transformer.autoAlignWithCompass(compassAzimuth, camDirX, camDirZ)
+        
         val root = rootAnchorNode ?: return
-        try {
-            previewNode = ModelNode(
-                modelInstance = sceneView.modelLoader.createModelInstance(ARROW_MODEL_PATH),
-                scaleToUnits  = ARROW_SCALE
-            ).apply {
-                isEditable = false
-                position = Position(0f, ARROW_FLOOR_Y, 0f)
-                rotation = Rotation(0f, firstSegmentArBearing + ArCoordinateTransformer.ARROW_GLB_FORWARD_OFFSET, 0f)
-                modelInstance.materialInstances.forEach { mat ->
-                    try { mat.setParameter("baseColorFactor", 0f, 0.7f, 1f, 1f) } // Blue preview
-                    catch (_: Exception) { }
-                }
-            }
-            root.addChildNode(previewNode!!)
-        } catch (e: Exception) {
-            Log.e(TAG, "Preview arrow load failed: ${e.message}")
-        }
-    }
-
-    /**
-     * Rotate the preview arrow in real time as the user drags the alignment slider.
-     */
-    fun updatePreviewHeading(offsetDeg: Float) {
-        val node = previewNode ?: return
-        node.rotation = Rotation(0f, firstSegmentArBearing + ArCoordinateTransformer.ARROW_GLB_FORWARD_OFFSET + offsetDeg, 0f)
-    }
-
-    /**
-     * Apply the confirmed heading offset from the alignment UI and place all arrows.
-     * Call this when the user taps "Confirm Direction".
-     *
-     * [userConfirmedOffsetDeg]: the angle the user rotated to align the virtual
-     * arrow with the real corridor. Positive = clockwise.
-     */
-    fun applyHeadingAndPlaceArrows(userConfirmedOffsetDeg: Float) {
-        try { previewNode?.destroy() } catch (_: Exception) {}
-        previewNode = null
-
-        transformer.headingOffsetDeg = userConfirmedOffsetDeg
-        val root = rootAnchorNode ?: return
-        // Clear any previously placed arrows (in case of retry)
         arrows.forEach { try { it.modelNode.destroy() } catch (_: Exception) {} }
         arrows.clear()
         placeArrows(root)
         placeStartEndPins(root)
         navigationStarted = true
-        Log.d(TAG, "Heading offset = $userConfirmedOffsetDeg°. ${arrows.size} arrows placed.")
+        Log.d(TAG, "Compass Auto-aligned. Azimuth=$compassAzimuth, headingOffset=${transformer.headingOffsetDeg}°. ${arrows.size} arrows placed.")
     }
 
     // ── Per-frame update ──────────────────────────────────────────────────────
@@ -284,7 +234,7 @@ class ArrowSceneManager(
                 onNodeReached(bestReachIdx)
 
                 // Remove start pin when user starts moving
-                if (bestReachIdx >= 1) removeStartPin()
+                removeStartPin()
 
                 // Check if arrived at destination
                 if (bestReachIdx >= pathNodes.size - 1) {
@@ -296,8 +246,6 @@ class ArrowSceneManager(
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
     fun destroy() {
-        try { previewNode?.destroy() } catch (_: Exception) {}
-        previewNode = null
         try { startPinNode?.destroy() } catch (_: Exception) {}
         startPinNode = null
         try { endPinNode?.destroy() } catch (_: Exception) {}
@@ -322,20 +270,6 @@ class ArrowSceneManager(
         val local  = stored.inverse().compose(camera.pose)
         camArX = local.tx()
         camArZ = local.tz()
-    }
-
-    /**
-     * Compute the bearing (degrees) of the first path segment in AR world space,
-     * WITHOUT any heading offset — this is the raw direction the route goes.
-     * The heading-alignment UI rotates this to match the real corridor.
-     */
-    private fun computeFirstSegmentBearing(): Float {
-        if (pathNodes.size < 2) return 0f
-        val n1 = pathNodes[0]
-        val n2 = pathNodes[1]
-        val mapDX = (n2.x - n1.x).toFloat() * AR_SCALE
-        val mapDZ = (n2.y - n1.y).toFloat() * AR_SCALE
-        return Math.toDegrees(atan2(mapDX.toDouble(), mapDZ.toDouble())).toFloat()
     }
 
     /**
@@ -428,7 +362,9 @@ class ArrowSceneManager(
                     isEditable = false
                     isVisible  = false  // hidden until updateArrowVisibility opens the window
                     position   = Position(pl.position.x, ARROW_FLOOR_Y, pl.position.z)
-                    rotation   = Rotation(0f, pl.yRotationDeg, 0f)
+                    // The arrow model natively faces diagonally Left.
+                    // Subtracting 135 degrees permanently corrects its internal orientation.
+                    rotation   = Rotation(0f, pl.yRotationDeg - 135f, 0f)
                     modelInstance.materialInstances.forEach { mat ->
                         try { mat.setParameter("baseColorFactor", 0f, 0.85f, 0.8f, 1f) }
                         catch (_: Exception) { }
