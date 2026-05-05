@@ -13,122 +13,147 @@ import kotlin.math.*
 private const val TAG = "ArrowSceneManager"
 
 private const val ARROW_MODEL_PATH = "models/nav_arrow.glb"
+private const val PIN_MODEL_PATH   = "models/pin.glb"
 private const val ARROW_SCALE      = 0.35f
 private const val ARROW_FLOOR_Y    = 0.05f
 
-// Number of hit-test poses to average for stable anchor placement
-private const val ANCHOR_SAMPLE_COUNT = 15
+// Anchor stabilisation samples
+private const val ANCHOR_SAMPLE_COUNT = 20
 
-// Start/end pin scales
-private const val PIN_SCALE = 0.5f
+// Pin rendering constants
+private const val PIN_SCALE  = 0.6f
+private const val PIN_HEIGHT = 0.5f
 
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Navigation phases:
+ *
+ *  SCANNING            → Floor being detected; anchor samples being collected.
+ *  AWAITING_USER       → Start pin placed; user must walk to it.
+ *  MANUAL_CALIBRATION  → User is at the start pin; must point phone toward the
+ *                         real-world destination and tap "Confirm Direction".
+ *                         Arrows are NOT shown yet.
+ *  NAVIGATING          → Manual calibration locked; arrows placed and tracking.
+ */
+enum class NavigationPhase {
+    SCANNING,
+    AWAITING_USER,
+    MANUAL_CALIBRATION,
+    NAVIGATING
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 class ArrowSceneManager(
     private val sceneView:   ARSceneView,
     private val transformer: ArCoordinateTransformer,
-    private val pathNodes:   List<GraphNode>
+    pathNodes:               List<GraphNode>
 ) {
-    // ── Anchor placement ──────────────────────────────────────────────────────
+    // ── State ─────────────────────────────────────────────────────────────────
+    private var currentPathNodes: MutableList<GraphNode> = pathNodes.toMutableList()
+
+    var phase: NavigationPhase = NavigationPhase.SCANNING
+        private set
+
+    // ── Anchor ────────────────────────────────────────────────────────────────
     private var rootAnchorNode: AnchorNode? = null
     private var anchorPose: Pose? = null
 
-    // Averaged anchor stabilisation
-    private val hitSamples = mutableListOf<FloatArray>()  // each = [tx, ty, tz]
+    private val hitSamples = mutableListOf<FloatArray>()
     var isCollectingSamples = false
         private set
+    val sampleProgress: Float get() =
+        (hitSamples.size.toFloat() / ANCHOR_SAMPLE_COUNT).coerceIn(0f, 1f)
 
-    var isWorldOriginSet = false
-        private set
+    val isWorldOriginSet: Boolean get() = phase != NavigationPhase.SCANNING
 
-    // ── Camera tracking ───────────────────────────────────────────────────────
+    // ── Compass ───────────────────────────────────────────────────────────────
+    /** Latest filtered compass heading — updated every sensor tick. */
+    private var currentFilteredHeadingDeg = 0f
+
+    /** First-segment map bearing computed at anchor-commit time. */
+    private var firstSegMapBearingDeg = 0f
+
+    // ── Debug values (exposed for the debug overlay) ──────────────────────────
+    var debugRawHeadingDeg:      Float = 0f; private set
+    var debugCalculatedBearing:  Float = 0f; private set
+    var debugAppliedOffset:      Float = 0f; private set
+
+    // ── Camera ────────────────────────────────────────────────────────────────
     private var camArX = 0f
     private var camArZ = 0f
+    val cameraArX: Float get() = camArX
+    val cameraArZ: Float get() = camArZ
 
-    var navigationStarted = false
+    // Camera forward direction in anchor-local AR space (horizontal unit vector).
+    // Extracted every frame: camera looks along -Z → forward = -getZAxis().
+    private var camForwardX = 0f
+    private var camForwardZ = -1f   // default: facing away from anchor
+
+    // Latest real-time orientation guidance — read by the HUD every frame.
+    var lastOrientationGuidance: OrientationGuidance? = null
         private set
 
-    // ── Arrival dedup ─────────────────────────────────────────────────────────
-    /** Last node index we already reported to onNodeReached; prevents re-firing
-     *  on every AR frame while Compose state is being updated. */
+    // ── Movement-based correction ─────────────────────────────────────────────
+    // Previous AR position — updated only after user has moved enough.
+    private var prevArX = Float.NaN
+    private var prevArZ = Float.NaN
+    // Whether a 180° flip is currently applied to all arrows.
+    private var movementCorrectionApplied = false
+
+    // ── Arrival ───────────────────────────────────────────────────────────────
     private var lastReportedNodeIdx = -1
+    private var cameraPathDistance  = 0f
 
-    // Track total path distance covered — used to window visible arrows
-    private var cameraPathDistance = 0f
-
-    // ── Start/End pin nodes ───────────────────────────────────────────────────
+    // ── Pins ──────────────────────────────────────────────────────────────────
     private var startPinNode: ModelNode? = null
-    private var endPinNode: ModelNode? = null
+    private var endPinNode:   ModelNode? = null
 
-    // ── Arrow nodes ───────────────────────────────────────────────────────────
-    /**
-     * An arrow that has been placed in the scene.
-     * [distanceAlongPath] is the cumulative distance from Node[0] along the path.
-     * This lets us sort and window arrows correctly as the user walks.
-     */
+    // ── Arrows ────────────────────────────────────────────────────────────────
     private data class ArrowEntry(
-        val modelNode:        ModelNode,
-        val placement:        ArrowPlacement,
-        val distanceAlongPath: Float   // metres from path start
+        val modelNode:         ModelNode,
+        val placement:         ArrowPlacement,
+        val distanceAlongPath: Float
     )
-    /** All live arrows. Sorted ascending by [ArrowEntry.distanceAlongPath]. */
     private val arrows = mutableListOf<ArrowEntry>()
 
-    // Node AR positions — computed fresh each call so headingOffset is always current
+    // ── Internals ─────────────────────────────────────────────────────────────
     private fun nodeArPositions(): List<ArPosition> =
-        pathNodes.map { transformer.toArLocal(it) }
+        currentPathNodes.map { transformer.toArLocal(it) }
 
-    /** Cumulative arc-length from Node[0] to each node in AR space. */
-    private fun nodePathDistances(): List<Float> {
-        val positions = nodeArPositions()
-        val dists = mutableListOf(0f)
-        for (i in 1 until positions.size) {
-            val prev = positions[i - 1]
-            val cur  = positions[i]
-            val dx = cur.x - prev.x
-            val dz = cur.z - prev.z
-            dists += dists.last() + sqrt(dx * dx + dz * dz)
-        }
-        return dists
-    }
+    private fun nodePathDistances(): List<Float> =
+        transformer.nodePathDistances(currentPathNodes)
 
-    // ── Phase 1: start collecting averaged hit-test samples ───────────────────
-    /**
-     * Call this when a floor plane is first detected.
-     * We accumulate [ANCHOR_SAMPLE_COUNT] poses and average them for
-     * a stable anchor placement rather than using a single noisy hit.
-     */
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 1: anchor sample collection (SCANNING)
+    // ─────────────────────────────────────────────────────────────────────────
     fun startSampleCollection() {
-        if (isWorldOriginSet || isCollectingSamples) return
+        if (phase != NavigationPhase.SCANNING || isCollectingSamples) return
         hitSamples.clear()
         isCollectingSamples = true
         Log.d(TAG, "Started anchor sample collection")
     }
 
-    /**
-     * Feed one hit-test result per frame while [isCollectingSamples] is true.
-     * Returns true when enough samples have been collected and the anchor
-     * is ready to be placed (caller should then call [commitAnchor]).
-     */
     fun feedHitSample(hit: HitResult): Boolean {
-        if (!isCollectingSamples || isWorldOriginSet) return false
+        if (!isCollectingSamples || phase != NavigationPhase.SCANNING) return false
         val p = hit.hitPose
         hitSamples.add(floatArrayOf(p.tx(), p.ty(), p.tz()))
-        Log.v(TAG, "Sample ${hitSamples.size}/$ANCHOR_SAMPLE_COUNT collected")
         return hitSamples.size >= ANCHOR_SAMPLE_COUNT
     }
 
-    /**
-     * Average the collected samples and create the anchor.
-     * Call this once [feedHitSample] returns true.
-     */
-    fun commitAnchor(session: Session, @Suppress("UNUSED_PARAMETER") frame: Frame) {
-        if (isWorldOriginSet || hitSamples.isEmpty()) return
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 1 → 2: place anchor + start pin; wait for user to walk to it
+    // ─────────────────────────────────────────────────────────────────────────
+    fun commitAnchorAndAwaitUser(
+        session: Session,
+        frame: Frame,
+        firstSegmentMapBearingDeg: Float = 0f
+    ) {
+        if (phase != NavigationPhase.SCANNING || hitSamples.isEmpty()) return
 
-        // Average the hit positions
         val avgTx = hitSamples.map { it[0] }.average().toFloat()
         val avgTy = hitSamples.map { it[1] }.average().toFloat()
         val avgTz = hitSamples.map { it[2] }.average().toFloat()
 
-        // Build a flat (gravity-aligned) pose at the averaged position
         val avgPose = Pose(floatArrayOf(avgTx, avgTy, avgTz), floatArrayOf(0f, 0f, 0f, 1f))
         val anchor  = session.createAnchor(avgPose)
         anchorPose  = anchor.pose
@@ -136,115 +161,288 @@ class ArrowSceneManager(
         val anchorNode = AnchorNode(sceneView.engine, anchor).also {
             sceneView.addChildNode(it)
         }
-        rootAnchorNode   = anchorNode
+        rootAnchorNode      = anchorNode
         isCollectingSamples = false
-        isWorldOriginSet = true
+        this.firstSegMapBearingDeg = firstSegmentMapBearingDeg
+        debugCalculatedBearing     = firstSegmentMapBearingDeg
 
-        Log.d(TAG, "Anchor committed.")
+        // Rough initial heading so the start pin appears near the correct position.
+        val zAxis = frame.camera.pose.getZAxis()
+        val cameraYawDeg = Math.toDegrees(
+            atan2((-zAxis[0]).toDouble(), zAxis[2].toDouble())
+        ).toFloat()
+        transformer.headingOffsetDeg = cameraYawDeg - firstSegmentMapBearingDeg
+
+        // Place start pin (visible immediately so user can walk to it)
+        // and end pin as a reference marker.
+        placeStartPin(anchorNode)
+        placeEndPin(anchorNode)
+
+        phase = NavigationPhase.AWAITING_USER
+        Log.d(TAG, "Anchor placed. Phase → AWAITING_USER")
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 2 → 3: user reached start pin; enter manual calibration
+    // ─────────────────────────────────────────────────────────────────────────
     /**
-     * Automatically calculates the heading to align the first path segment
-     * with the physical forward direction (-Z axis), places all arrows and pins,
-     * and starts navigation tracking.
+     * Called when the user taps "Start Navigation" after walking to the pin.
+     * Transitions to MANUAL_CALIBRATION so the user can point their phone
+     * toward the destination and confirm the direction.
      */
-    fun autoAlignAndStart(compassAzimuth: Float, camera: Camera) {
-        val stored = anchorPose ?: return
-        val local = stored.inverse().compose(camera.pose)
-        val zAxis = local.zAxis
-        // local.zAxis returns the +Z axis. The camera looks down -Z.
-        // So the camera's forward vector is (-zAxis[0], -zAxis[1], -zAxis[2])
-        val camDirX = -zAxis[0]
-        val camDirZ = -zAxis[2]
-        
-        transformer.autoAlignWithCompass(compassAzimuth, camDirX, camDirZ)
-        
-        val root = rootAnchorNode ?: return
-        arrows.forEach { try { it.modelNode.destroy() } catch (_: Exception) {} }
-        arrows.clear()
-        placeArrows(root)
-        placeStartEndPins(root)
-        navigationStarted = true
-        Log.d(TAG, "Compass Auto-aligned. Azimuth=$compassAzimuth, headingOffset=${transformer.headingOffsetDeg}°. ${arrows.size} arrows placed.")
+    fun requestStartNavigation(compassAccuracyLevel: Int): StartResult {
+        if (phase != NavigationPhase.AWAITING_USER) {
+            return StartResult.Error("Not in awaiting state")
+        }
+
+        val distFromStart = sqrt(camArX * camArX + camArZ * camArZ)
+        if (distFromStart > START_PIN_CONFIRM_RADIUS_M) {
+            return StartResult.TooFar(distFromStart)
+        }
+
+        phase = NavigationPhase.MANUAL_CALIBRATION
+        Log.d(TAG, "Phase → MANUAL_CALIBRATION. distFromStart=$distFromStart")
+        return StartResult.Ok
     }
 
-    // ── Per-frame update ──────────────────────────────────────────────────────
-    fun onFrame(frame: Frame, currentSegmentIdx: Int, onNodeReached: (Int) -> Unit) {
-        if (!isWorldOriginSet) return
-        if (!navigationStarted) return
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 3 → 4: user taps "Confirm Direction"
+    // ─────────────────────────────────────────────────────────────────────────
+    /**
+     * Called when the user has pointed their phone in the real-world direction
+     * of the destination and taps "Confirm Direction".
+     *
+     * [deviceHeadingDeg] – compass azimuth at this moment (0–360°, CW from north).
+     *
+     * Calculates:  offset = trueBearing − deviceHeading
+     * Locks this as the world-alignment reference, then spawns arrows.
+     */
+    fun confirmManualDirection(deviceHeadingDeg: Float): Boolean {
+        if (phase != NavigationPhase.MANUAL_CALIBRATION) return false
+
+        val trueBearing = firstSegMapBearingDeg
+        debugRawHeadingDeg     = deviceHeadingDeg
+        debugCalculatedBearing = trueBearing
+
+        // Delegate offset computation + locking to the transformer
+        transformer.applyManualCalibration(
+            deviceHeadingDeg = deviceHeadingDeg,
+            trueBearingDeg   = trueBearing
+        )
+        debugAppliedOffset = transformer.headingOffsetDeg
+
+        Log.d(TAG,
+            "Manual calibration confirmed. " +
+                    "deviceHeading=$deviceHeadingDeg trueBearing=$trueBearing " +
+                    "offset=${transformer.headingOffsetDeg}"
+        )
+
+        // Arrows can now be placed with the correct world alignment
+        rootAnchorNode?.let { placeArrows(it) }
+        phase = NavigationPhase.NAVIGATING
+        return true
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Feed a live compass reading
+    // ─────────────────────────────────────────────────────────────────────────
+    /**
+     * Call this from the SensorEventListener on every reading.
+     * During MANUAL_CALIBRATION this merely updates the cached heading
+     * (used when user taps "Confirm Direction").
+     * During NAVIGATING it applies gentle Kalman-filtered drift correction.
+     */
+    fun feedCompassReading(rawDeg: Float, accuracy: Int): Boolean {
+        debugRawHeadingDeg = rawDeg
+        val filtered = transformer.updateCompassHeading(rawDeg)
+        currentFilteredHeadingDeg = filtered
+        debugAppliedOffset = transformer.headingOffsetDeg
+        // Return value kept for API compatibility; calibration no longer
+        // auto-completes from compass alone.
+        return false
+    }
+
+    /** Latest filtered compass heading — used by the UI "Confirm Direction" action. */
+    fun currentHeadingDeg(): Float = currentFilteredHeadingDeg
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Per-frame update (NAVIGATING)
+    // ─────────────────────────────────────────────────────────────────────────
+    fun onFrame(
+        frame: Frame,
+        currentSegmentIdx: Int,
+        onNodeReached: (Int) -> Unit,
+        onDeviation: ((deviationDist: Float, userArX: Float, userArZ: Float) -> Unit)? = null
+    ) {
+        if (phase != NavigationPhase.NAVIGATING) return
         if (frame.camera.trackingState != TrackingState.TRACKING) return
         updateCameraPosition(frame.camera)
-        if (arrows.isEmpty() && currentSegmentIdx >= pathNodes.size - 1) return
+        updatePinBillboards()
 
-        // Wait until the user has actually taken a step away from the start point (0,0)
-        val distanceFromStart = sqrt(camArX * camArX + camArZ * camArZ)
-        if (distanceFromStart < 0.5f) {
+        val distFromStart = sqrt(camArX * camArX + camArZ * camArZ)
+        if (distFromStart < MIN_TRAVEL_BEFORE_ARRIVAL_M) {
             updateArrowVisibility()
             return
         }
 
-        // Estimate camera progress along the path using the nearest node
-        val nodeDists  = nodePathDistances()
-        val nodeAr     = nodeArPositions()
-        var closestNodeDist = Float.MAX_VALUE
-        var closestNodePathDist = 0f
-        for (i in nodeAr.indices) {
-            val dx = camArX - nodeAr[i].x
-            val dz = camArZ - nodeAr[i].z
-            val d = sqrt(dx * dx + dz * dz)
-            if (d < closestNodeDist) {
-                closestNodeDist    = d
-                closestNodePathDist = nodeDists[i]
-            }
-        }
-        cameraPathDistance = closestNodePathDist
+        // ── Project user onto path for accurate distance tracking ──────────
+        val projection = transformer.projectOntoPath(camArX, camArZ, currentPathNodes)
+        cameraPathDistance = projection.distanceAlongPath
 
-        // ── Delete arrows already passed by the user ──────────────────────────
+        // ── Real-time orientation guidance (camera forward vs next waypoint) ──
+        // Next waypoint = end of the segment the user is currently on.
+        val nodeAr      = nodeArPositions()
+        val nextIdx     = (projection.closestSegmentIndex + 1).coerceAtMost(currentPathNodes.size - 1)
+        val nextNodeAR  = nodeAr.getOrNull(nextIdx)
+        lastOrientationGuidance = if (nextNodeAR != null) {
+            transformer.computeOrientationGuidance(
+                camFwdX       = camForwardX,
+                camFwdZ       = camForwardZ,
+                nextWaypointAR = nextNodeAR,
+                userArX       = camArX,
+                userArZ       = camArZ
+            )
+        } else null
+
+        // ── Movement-based direction correction ───────────────────────────────
+        // Uses the user's real walking direction (not camera forward) to detect
+        // if they are moving opposite to the path and corrects arrow orientation.
+        // SAFE: only activates after MOVEMENT_CORRECTION_THRESHOLD_M of travel.
+        if (nextNodeAR != null && !prevArX.isNaN()) {
+            val mvDx = camArX - prevArX
+            val mvDz = camArZ - prevArZ
+            val mvLen = sqrt(mvDx * mvDx + mvDz * mvDz)
+
+            if (mvLen >= MOVEMENT_CORRECTION_THRESHOLD_M) {
+                // Normalize movement direction
+                val mvX = mvDx / mvLen
+                val mvZ = mvDz / mvLen
+
+                // Normalize path direction (user→nextWaypoint)
+                val pdx = nextNodeAR.x - camArX
+                val pdz = nextNodeAR.z - camArZ
+                val pdLen = sqrt(pdx * pdx + pdz * pdz)
+                if (pdLen > 0.01f) {
+                    val pathX = pdx / pdLen
+                    val pathZ = pdz / pdLen
+
+                    val dot = mvX * pathX + mvZ * pathZ
+
+                    Log.d(TAG,
+                        "MovCorrection | movDir=(${"%.3f".format(mvX)},${"%.3f".format(mvZ)}) " +
+                        "pathDir=(${"%.3f".format(pathX)},${"%.3f".format(pathZ)}) " +
+                        "dot=${"%.3f".format(dot)} " +
+                        "flipApplied=$movementCorrectionApplied"
+                    )
+
+                    val shouldFlip = dot < 0f
+                    if (shouldFlip != movementCorrectionApplied) {
+                        // Apply or remove the 180° flip on every rendered arrow
+                        arrows.forEach { entry ->
+                            val currentRot = entry.placement.yRotationDeg
+                            val newRot = if (shouldFlip) (currentRot + 180f) % 360f
+                                         else (currentRot - 180f + 360f) % 360f
+                            entry.modelNode.rotation = Rotation(0f, newRot, 0f)
+                        }
+                        movementCorrectionApplied = shouldFlip
+                        Log.d(TAG, "MovCorrection: arrows flipped=$shouldFlip (dot=$dot)")
+                    }
+                }
+
+                // Update previous position once threshold is crossed
+                prevArX = camArX
+                prevArZ = camArZ
+            }
+        } else if (prevArX.isNaN()) {
+            // First valid position — seed the tracker
+            prevArX = camArX
+            prevArZ = camArZ
+        }
+
+        // ── Remove arrows the user has already passed ──────────────────────
         val toRemove = arrows.filter { entry ->
             val dx = camArX - entry.placement.position.x
             val dz = camArZ - entry.placement.position.z
             sqrt(dx * dx + dz * dz) < ARROW_DELETE_DISTANCE_M &&
                     entry.distanceAlongPath <= cameraPathDistance
         }
-        toRemove.forEach { entry ->
-            try { entry.modelNode.destroy() } catch (_: Exception) {}
-        }
+        toRemove.forEach { try { it.modelNode.destroy() } catch (_: Exception) {} }
         arrows.removeAll(toRemove.toSet())
 
-        // ── Show/hide arrows based on look-ahead window ───────────────────────
         updateArrowVisibility()
 
-        // ── Node arrival detection ────────────────────────────────────────────
-        // Check against ALL upcoming nodes, not just the next one.
-        // This prevents getting stuck if the user skips a waypoint.
-        if (currentSegmentIdx < pathNodes.size - 1) {
-            // Find the furthest node within arrival threshold
-            var bestReachIdx = -1
-            for (checkIdx in currentSegmentIdx + 1 until pathNodes.size) {
-                val checkPos = nodeAr.getOrNull(checkIdx) ?: continue
-                val dx = camArX - checkPos.x
-                val dz = camArZ - checkPos.z
-                val dist = sqrt(dx * dx + dz * dz)
-                if (dist < ARRIVAL_THRESHOLD_M) {
-                    bestReachIdx = checkIdx
-                }
-            }
-            if (bestReachIdx > 0 && bestReachIdx != lastReportedNodeIdx) {
-                lastReportedNodeIdx = bestReachIdx
-                onNodeReached(bestReachIdx)
+        // ── Deviation check → notify caller to reroute ────────────────────
+        if (projection.deviationDistance > REROUTE_THRESHOLD_M) {
+            onDeviation?.invoke(projection.deviationDistance, camArX, camArZ)
+        }
 
-                // Remove start pin when user starts moving
+        // ── Arrival: only check distance to the FINAL node ────────────────
+        val finalNode = nodeAr.lastOrNull() ?: return
+        val dxFinal   = camArX - finalNode.x
+        val dzFinal   = camArZ - finalNode.z
+        val distToFinal = sqrt(dxFinal * dxFinal + dzFinal * dzFinal)
+
+        if (distToFinal < ARRIVAL_THRESHOLD_M) {
+            val finalIdx = currentPathNodes.size - 1
+            if (lastReportedNodeIdx != finalIdx) {
+                lastReportedNodeIdx = finalIdx
+                onNodeReached(finalIdx)
                 removeStartPin()
+                removeEndPin()
+            }
+            return
+        }
 
-                // Check if arrived at destination
-                if (bestReachIdx >= pathNodes.size - 1) {
-                    removeEndPin()
-                }
+        // ── Intermediate node progress (HUD card updates) ─────────────────
+        for (checkIdx in (lastReportedNodeIdx + 1) until currentPathNodes.size - 1) {
+            val checkPos = nodeAr.getOrNull(checkIdx) ?: continue
+            val dx = camArX - checkPos.x
+            val dz = camArZ - checkPos.z
+            if (sqrt(dx * dx + dz * dz) < ARRIVAL_THRESHOLD_M) {
+                lastReportedNodeIdx = checkIdx
+                onNodeReached(checkIdx)
+                if (checkIdx >= 1) removeStartPin()
+                break
             }
         }
     }
 
-    // ── Cleanup ───────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // Rerouting: replace arrows with a new path (pins stay in place)
+    // ─────────────────────────────────────────────────────────────────────────
+    fun rebuildPath(newPathNodes: List<GraphNode>) {
+        arrows.forEach { try { it.modelNode.destroy() } catch (_: Exception) {} }
+        arrows.clear()
+        lastReportedNodeIdx       = -1
+        cameraPathDistance        = 0f
+        currentPathNodes          = newPathNodes.toMutableList()
+        // Reset movement tracker so the new path starts fresh
+        prevArX                   = Float.NaN
+        prevArZ                   = Float.NaN
+        movementCorrectionApplied = false
+        rootAnchorNode?.let { placeArrows(it) }
+        Log.d(TAG, "Path rebuilt: ${newPathNodes.size} nodes")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Billboard pins toward camera every frame
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun updatePinBillboards() {
+        fun billboard(pin: ModelNode?) {
+            pin ?: return
+            val pos  = pin.position
+            val dx   = camArX - pos.x
+            val dz   = camArZ - pos.z
+            val yDeg = Math.toDegrees(atan2(dx.toDouble(), dz.toDouble())).toFloat()
+            pin.rotation = Rotation(0f, yDeg, 0f)
+        }
+        billboard(startPinNode)
+        billboard(endPinNode)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Cleanup
+    // ─────────────────────────────────────────────────────────────────────────
     fun destroy() {
         try { startPinNode?.destroy() } catch (_: Exception) {}
         startPinNode = null
@@ -253,72 +451,74 @@ class ArrowSceneManager(
         arrows.forEach { try { it.modelNode.destroy() } catch (_: Exception) {} }
         arrows.clear()
         try { rootAnchorNode?.destroy() } catch (_: Exception) {}
-        rootAnchorNode      = null
-        anchorPose          = null
-        isWorldOriginSet    = false
+        rootAnchorNode            = null
+        anchorPose                = null
         hitSamples.clear()
-        isCollectingSamples = false
-        navigationStarted   = false
-        lastReportedNodeIdx = -1
-        cameraPathDistance  = 0f
+        isCollectingSamples       = false
+        lastReportedNodeIdx       = -1
+        cameraPathDistance        = 0f
+        prevArX                   = Float.NaN
+        prevArZ                   = Float.NaN
+        movementCorrectionApplied = false
+        phase                     = NavigationPhase.SCANNING
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
-
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────────────────
     private fun updateCameraPosition(camera: Camera) {
         val stored = anchorPose ?: return
         val local  = stored.inverse().compose(camera.pose)
         camArX = local.tx()
         camArZ = local.tz()
+        // Camera looks along its local -Z axis (OpenGL convention).
+        // getZAxis() returns the +Z axis in anchor-local space → negate for forward.
+        val zAxis   = local.getZAxis()
+        camForwardX = -zAxis[0]
+        camForwardZ = -zAxis[2]
     }
 
-    /**
-     * Place start and end pin indicators in the AR scene.
-     * Start pin = green-tinted arrow at origin, End pin = red-tinted arrow at destination.
-     */
-    private fun placeStartEndPins(root: AnchorNode) {
-        if (pathNodes.size < 2) return
-
-        // ── Start pin (green) at origin (0,0) ────────────────────────────────
+    private fun placeStartPin(root: AnchorNode) {
+        if (currentPathNodes.isEmpty()) return
+        val startPos = transformer.toArLocal(currentPathNodes.first())
         try {
             startPinNode = ModelNode(
-                modelInstance = sceneView.modelLoader.createModelInstance(ARROW_MODEL_PATH),
+                modelInstance = sceneView.modelLoader.createModelInstance(PIN_MODEL_PATH),
                 scaleToUnits  = PIN_SCALE
             ).apply {
                 isEditable = false
-                position = Position(0f, ARROW_FLOOR_Y + 0.3f, 0f)  // Elevated above arrows
-                // Point straight down to indicate "you are here"
-                rotation = Rotation(90f, 0f, 0f)
+                position   = Position(startPos.x, PIN_HEIGHT, startPos.z)
                 modelInstance.materialInstances.forEach { mat ->
-                    try { mat.setParameter("baseColorFactor", 0.2f, 0.9f, 0.3f, 1f) } // Green
-                    catch (_: Exception) { }
+                    try { mat.setParameter("baseColorFactor", 0.1f, 0.9f, 0.3f, 1f) }
+                    catch (_: Exception) {}
                 }
             }
             root.addChildNode(startPinNode!!)
-            Log.d(TAG, "Start pin placed at origin")
+            Log.d(TAG, "START pin placed at (${startPos.x}, ${startPos.z})")
         } catch (e: Exception) {
-            Log.e(TAG, "Start pin failed: ${e.message}")
+            Log.e(TAG, "START pin failed: ${e.message}")
         }
+    }
 
-        // ── End pin (red) at destination ──────────────────────────────────────
-        val destPos = transformer.toArLocal(pathNodes.last())
+    private fun placeEndPin(root: AnchorNode) {
+        if (currentPathNodes.size < 2) return
+        val destPos = transformer.toArLocal(currentPathNodes.last())
         try {
             endPinNode = ModelNode(
-                modelInstance = sceneView.modelLoader.createModelInstance(ARROW_MODEL_PATH),
+                modelInstance = sceneView.modelLoader.createModelInstance(PIN_MODEL_PATH),
                 scaleToUnits  = PIN_SCALE
             ).apply {
                 isEditable = false
-                position = Position(destPos.x, ARROW_FLOOR_Y + 0.3f, destPos.z)
-                rotation = Rotation(90f, 0f, 0f)
+                position   = Position(destPos.x, PIN_HEIGHT, destPos.z)
                 modelInstance.materialInstances.forEach { mat ->
-                    try { mat.setParameter("baseColorFactor", 0.95f, 0.2f, 0.2f, 1f) } // Red
-                    catch (_: Exception) { }
+                    try { mat.setParameter("baseColorFactor", 0.95f, 0.15f, 0.15f, 1f) }
+                    catch (_: Exception) {}
                 }
             }
             root.addChildNode(endPinNode!!)
-            Log.d(TAG, "End pin placed at destination")
+            Log.d(TAG, "END pin placed at (${destPos.x}, ${destPos.z})")
         } catch (e: Exception) {
-            Log.e(TAG, "End pin failed: ${e.message}")
+            Log.e(TAG, "END pin failed: ${e.message}")
         }
     }
 
@@ -333,21 +533,18 @@ class ArrowSceneManager(
     }
 
     private fun placeArrows(root: AnchorNode) {
-        val placements = transformer.computeArrowPlacements(pathNodes)
+        val placements = transformer.computeArrowPlacements(currentPathNodes)
         if (placements.isEmpty()) {
             Log.w(TAG, "No placements — path too short?")
             return
         }
 
-        // Pre-compute arc-lengths for each segment start node so we can assign
-        // a path-distance to every arrow placement.
         val nodeDists = nodePathDistances()
+        val nodeArPos = nodeArPositions()
 
         for (pl in placements) {
-            // distanceAlongPath = distance to the segment-start node + offset within segment
             val segStartDist = nodeDists.getOrElse(pl.segmentIndex) { 0f }
-            // Estimate offset within segment from how far along the placement is
-            val segStartPos  = nodeArPositions().getOrNull(pl.segmentIndex)
+            val segStartPos  = nodeArPos.getOrNull(pl.segmentIndex)
             val arrowDist = if (segStartPos != null) {
                 val dx = pl.position.x - segStartPos.x
                 val dz = pl.position.z - segStartPos.z
@@ -360,14 +557,12 @@ class ArrowSceneManager(
                     scaleToUnits  = ARROW_SCALE
                 ).apply {
                     isEditable = false
-                    isVisible  = false  // hidden until updateArrowVisibility opens the window
+                    isVisible  = false
                     position   = Position(pl.position.x, ARROW_FLOOR_Y, pl.position.z)
-                    // The arrow model natively faces diagonally Left.
-                    // Subtracting 135 degrees permanently corrects its internal orientation.
-                    rotation   = Rotation(0f, pl.yRotationDeg - 135f, 0f)
+                    rotation   = Rotation(0f, pl.yRotationDeg, 0f)
                     modelInstance.materialInstances.forEach { mat ->
                         try { mat.setParameter("baseColorFactor", 0f, 0.85f, 0.8f, 1f) }
-                        catch (_: Exception) { }
+                        catch (_: Exception) {}
                     }
                 }
                 root.addChildNode(node)
@@ -377,16 +572,10 @@ class ArrowSceneManager(
             }
         }
 
-        // Ensure sorted by distance so windowing always works correctly
         arrows.sortBy { it.distanceAlongPath }
         Log.d(TAG, "Placed ${arrows.size} arrows along path")
     }
 
-    /**
-     * Show up to [MAX_VISIBLE_ARROWS] arrows starting from the user's current
-     * position along the path. Arrows behind the user are already deleted;
-     * arrows beyond the look-ahead window are hidden but kept for future use.
-     */
     private fun updateArrowVisibility() {
         var shown = 0
         for (entry in arrows) {
@@ -394,18 +583,27 @@ class ArrowSceneManager(
                 entry.modelNode.isVisible = shown < MAX_VISIBLE_ARROWS
                 if (entry.modelNode.isVisible) shown++
             } else {
-                // Arrow is behind — should have been deleted, but keep hidden just in case
                 entry.modelNode.isVisible = false
             }
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
     companion object {
-        /** How close the user needs to be to a node before "arrived" fires (metres). */
-        const val ARRIVAL_THRESHOLD_M: Float  = 1.2f
-        /** An arrow is permanently destroyed once the user passes within this distance of it. */
-        const val ARROW_DELETE_DISTANCE_M: Float = 0.8f
-        /** Maximum arrows visible in the look-ahead window at any time. */
-        const val MAX_VISIBLE_ARROWS: Int = 6
+        const val MIN_TRAVEL_BEFORE_ARRIVAL_M:      Float = 1.5f
+        const val ARRIVAL_THRESHOLD_M:              Float = 1.5f   // was 1.0 — prevents early arrival
+        const val ARROW_DELETE_DISTANCE_M:          Float = 0.7f
+        const val MAX_VISIBLE_ARROWS:               Int  = 8
+        const val START_PIN_CONFIRM_RADIUS_M:       Float = 2.5f
+        const val REROUTE_THRESHOLD_M:              Float = 2.0f   // deviation before recalculating
+        /** Minimum real movement before movement-based correction activates. */
+        const val MOVEMENT_CORRECTION_THRESHOLD_M:  Float = 1.0f
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+sealed class StartResult {
+    object Ok : StartResult()
+    data class TooFar(val distanceM: Float) : StartResult()
+    data class Error(val reason: String) : StartResult()
 }
