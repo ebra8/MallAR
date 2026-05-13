@@ -1,13 +1,9 @@
 package com.example.mallar.ui.screens
 
-import android.content.Context
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
+import android.os.Handler
+import android.os.Looper
 import android.view.ViewGroup
 import androidx.compose.animation.*
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,6 +13,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,7 +22,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -32,27 +29,21 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.mallar.ar.*
-import com.example.mallar.data.AStarDirection
+import com.example.mallar.ui.ar.*
 import com.example.mallar.data.GraphNode
-import android.os.Handler
-import android.os.Looper
-import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.mallar.navigation.SensorFusionManager
+import com.example.mallar.navigation.StepTracker
 import com.google.ar.core.*
 import io.github.sceneview.ar.ARSceneView
 import kotlin.math.*
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 private val NavTeal     = Color(0xFF009688)
-private val NavTealDark = Color(0xFF00695C)
 private val NavGreen    = Color(0xFF43A047)
 private val NavAmber    = Color(0xFFFFA000)
-private val NavBlue     = Color(0xFF1565C0)
-
-private const val DISPLAY_SCALE = 0.05f
-private const val PX_TO_M = 0.05f
-private const val M_PER_MIN = 80f
 
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
@@ -75,35 +66,35 @@ fun ArNavigationScreen(
     val showStoreCard                  = state.showStoreCard
     val reachedNotification            = state.reachedNotification
     val navigationPhase                = state.navigationPhase
-    val startPinReady                  = state.startPinReady
     val distToStartPinM                = state.distToStartPinM
-    val awaitingManualDirectionConfirm = state.awaitingManualDirectionConfirm
     val showDebugOverlay               = state.showDebugOverlay
 
     val managerRef = remember { mutableStateOf<ArrowSceneManager?>(null) }
 
-    // ── Compass sensor ────────────────────────────────────────────────────────
+    // ── Sensor fusion: TYPE_ROTATION_VECTOR → LP filter → Kalman filter ────────
+    // Replaces raw accelerometer+magnetometer compass to fix indoor drift/jitter.
+    // SensorFusionManager applies:
+    //   1. Android OS Kalman fusion (TYPE_ROTATION_VECTOR = gyro+accel+mag).
+    //   2. Exponential low-pass filter (α=0.15) to kill magnetic spike noise.
+    //   3. Scalar Kalman filter (Q=0.005, R=5) to smooth residual drift.
+    //
+    // arrowRotation = targetBearing − userHeading (normalised to −180…+180)
     val compassHeading  = remember { mutableFloatStateOf(0f) }
     val compassAccuracy = remember { mutableIntStateOf(0) }
 
+    // SensorFusionManager lifecycle
     DisposableEffect(Unit) {
-        val sensorManager  = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        val rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-        val listener = object : SensorEventListener {
-            private val rotationMatrix   = FloatArray(9)
-            private val orientationAngles = FloatArray(3)
+        val fusionManager = SensorFusionManager(context)
+        fusionManager.onHeadingChanged = { azimuthDeg, accuracy ->
+            compassHeading.floatValue  = azimuthDeg
+            compassAccuracy.intValue   = accuracy
 
-            override fun onSensorChanged(event: SensorEvent) {
-                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                SensorManager.getOrientation(rotationMatrix, orientationAngles)
-                val azimuthDeg = Math.toDegrees(orientationAngles[0].toDouble()).toFloat()
-                val heading = (azimuthDeg + 360f) % 360f
-                compassHeading.floatValue = heading
+            val manager = managerRef.value
+            if (manager != null) {
+                // Feed smoothed heading into ArrowSceneManager (replaces raw feed)
+                manager.feedCompassReading(azimuthDeg, accuracy)
 
-                val manager = managerRef.value ?: return
-                manager.feedCompassReading(heading, compassAccuracy.intValue)
-
-                // Push debug values to ViewModel every tick
+                // Push debug values to ViewModel — throttled by the sensor rate (~50 Hz)
                 Handler(Looper.getMainLooper()).post {
                     viewModel.updateDebugValues(
                         rawHeading = manager.debugRawHeadingDeg,
@@ -112,15 +103,21 @@ fun ArNavigationScreen(
                     )
                 }
             }
+        }
+        fusionManager.start()
+        onDispose { fusionManager.stop() }
+    }
 
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-                compassAccuracy.intValue = accuracy
-            }
+    // ── Step counter: TYPE_STEP_COUNTER (hardware) or accelerometer fallback ────
+    // Hardware step counter runs on the DSP — no CPU wakeups, no drift errors.
+    // Dead-reckoning advances position by STRIDE_LENGTH_M (0.75 m) per step.
+    DisposableEffect(Unit) {
+        val stepTracker = StepTracker(context)
+        stepTracker.onStep = { totalSteps, distMetres ->
+            viewModel.onStepDetected(totalSteps, distMetres)
         }
-        rotationSensor?.let {
-            sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_FASTEST)
-        }
-        onDispose { sensorManager.unregisterListener(listener) }
+        stepTracker.start()
+        onDispose { stepTracker.stop() }
     }
 
     // ── Root layout ───────────────────────────────────────────────────────────
@@ -142,8 +139,8 @@ fun ArNavigationScreen(
                     }
 
                     fun handleFrame(session: Session, frame: Frame) {
-                        when (frame.camera.trackingState) {
-                            TrackingState.TRACKING -> {
+                        val trackingState = frame.camera.trackingState
+                        if (trackingState == TrackingState.TRACKING) {
                                 val manager = managerRef.value
 
                                 // Create manager on first TRACKING frame
@@ -256,7 +253,7 @@ fun ArNavigationScreen(
                                                     viewModel.onNodeReached(reachedIdx)
                                                 }
                                             },
-                                            onDeviation = { devDist, x, z ->
+                                            onDeviation = { _, x, z ->
                                                 Handler(Looper.getMainLooper()).post {
                                                     viewModel.onRerouteTriggered(x, z) { newPath ->
                                                         manager.rebuildPath(newPath)
@@ -275,18 +272,19 @@ fun ArNavigationScreen(
                                 }
                             }
 
-                            TrackingState.PAUSED -> Handler(Looper.getMainLooper()).post {
-                                viewModel.updateStatusText("⚠️ Move slower — tracking lost")
+                            else if (trackingState == TrackingState.PAUSED) {
+                                Handler(Looper.getMainLooper()).post {
+                                    viewModel.updateStatusText("⚠️ Move slower — tracking lost")
+                                }
                             }
 
-                            TrackingState.STOPPED -> {
+                            else if (trackingState == TrackingState.STOPPED) {
                                 Handler(Looper.getMainLooper()).post {
                                     viewModel.updateStatusText("❌ AR stopped. Please restart.")
                                 }
                                 managerRef.value?.destroy()
                                 managerRef.value = null
                             }
-                        }
                     }
 
                     onSessionUpdated = { session, frame -> handleFrame(session, frame) }
@@ -318,7 +316,7 @@ fun ArNavigationScreen(
                         .clickable { onBackClick() },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.ArrowBack, "Back", tint = Color.Black, modifier = Modifier.size(20.dp))
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.Black, modifier = Modifier.size(20.dp))
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -465,6 +463,7 @@ fun ArNavigationScreen(
                         TurnHint.STRAIGHT -> currentInstructionLabel
                         TurnHint.LEFT     -> "↰  Turn Left"
                         TurnHint.RIGHT    -> "↱  Turn Right"
+                        else              -> currentInstructionLabel
                     }
 
                     Button(
@@ -497,7 +496,7 @@ fun ArNavigationScreen(
                     Text("Show Road", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     Spacer(Modifier.width(6.dp))
                     Icon(
-                        imageVector = if (showRouteSheet) Icons.Default.KeyboardArrowDown else Icons.Default.ArrowForward,
+                        imageVector = if (showRouteSheet) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.ArrowForward,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(18.dp)
@@ -838,7 +837,7 @@ private fun RouteSheet(
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("1st Floor", fontSize = 14.sp, color = Color.Gray)
-                Text("  |  ${walkMinutes} min walk", fontSize = 14.sp, color = Color.Gray)
+                Text("  |  $walkMinutes min walk", fontSize = 14.sp, color = Color.Gray)
                 Spacer(Modifier.weight(1f))
                 Text("${distanceM}m", fontSize = 13.sp, color = Color(0xFF009688), fontWeight = FontWeight.SemiBold)
             }

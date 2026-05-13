@@ -2,6 +2,7 @@ package com.example.mallar.ml
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.RectF
 import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -13,7 +14,22 @@ import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import kotlin.math.sqrt
 
-data class DetectionResult(val brand: String, val similarity: Float)
+/**
+ * A single brand detection result.
+ *
+ * [imageX] / [imageY]: normalised [0, 1] position of the logo centroid within
+ * the camera frame (0 = left/top, 1 = right/bottom, 0.5 = centre).
+ * These are populated by [LogoDetector.detectTopNWithLocation]; when using
+ * [detect] or [detectTopN] they default to 0.5 (centre-frame assumption).
+ */
+data class DetectionResult(
+    val brand: String,
+    val similarity: Float,
+    /** Normalised horizontal position in the camera frame [0 = left, 1 = right]. */
+    val imageX: Float = 0.5f,
+    /** Normalised vertical position in the camera frame [0 = top, 1 = bottom]. */
+    val imageY: Float = 0.5f
+)
 
 class LogoDetector(private val context: Context) {
 
@@ -85,6 +101,7 @@ class LogoDetector(private val context: Context) {
 
     // ── detection ─────────────────────────────────────────────────────────────
 
+    /** Returns the single best detection above [CONFIDENCE_THRESHOLD], or null. */
     fun detect(bitmap: Bitmap): DetectionResult? {
         if (!modelLoaded)    { Log.w(TAG, "Model not ready");    return null }
         if (!databaseLoaded) { Log.w(TAG, "Database not ready"); return null }
@@ -105,6 +122,43 @@ class LogoDetector(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "❌ Detection error: ${e.message}")
             null
+        }
+    }
+
+    /**
+     * Returns the top [maxResults] detections with similarity ≥ [minSimilarity],
+     * sorted descending by score. Used by [com.example.mallar.ml.LocalizationEngine]
+     * for multi-landmark pose estimation.
+     *
+     * @param bitmap      Camera frame bitmap (any orientation — preprocessed internally).
+     * @param maxResults  Maximum number of results to return (default 5).
+     * @param minSimilarity Minimum similarity cutoff (default = CONFIDENCE_THRESHOLD).
+     */
+    fun detectTopN(
+        bitmap: Bitmap,
+        maxResults: Int = 5,
+        minSimilarity: Float = CONFIDENCE_THRESHOLD
+    ): List<DetectionResult> {
+        if (!modelLoaded)    { Log.w(TAG, "Model not ready");    return emptyList() }
+        if (!databaseLoaded) { Log.w(TAG, "Database not ready"); return emptyList() }
+
+        return try {
+            val inputBuffer = preprocessImage(bitmap)
+            val queryVector = extractEmbedding(inputBuffer)
+            val scores      = compareWithDatabase(queryVector)
+
+            scores
+                .filter  { it.similarity >= minSimilarity }
+                .take    (maxResults)
+                .also    { results ->
+                    Log.d(TAG, "🔎 detectTopN: ${results.size} results above $minSimilarity")
+                    results.forEachIndexed { i, r ->
+                        Log.d(TAG, "  [$i] ${r.brand} → ${"%.4f".format(r.similarity)}")
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ detectTopN error: ${e.message}")
+            emptyList()
         }
     }
 
@@ -172,6 +226,78 @@ class LogoDetector(private val context: Context) {
     }
 
     fun isReady() = modelLoaded && databaseLoaded && shopDatabase.isNotEmpty()
+
+    // ── Sliding-window location-aware detection ───────────────────────────────
+    //
+    // Divides the frame into a GRID × GRID grid and runs the embedding model on
+    // each cell.  For every brand above [minSimilarity] we record which grid cell
+    // gave the highest similarity — its centre becomes (imageX, imageY).
+    //
+    // This gives us genuine image-space coordinates for PnP input, replacing the
+    // naive "assume logo is at image centre" assumption.
+    //
+    // Cost: GRID² inference calls per scan (9 by default).
+    // Typically <300 ms on a mid-range phone — acceptable for a one-shot scan.
+
+    fun detectTopNWithLocation(
+        bitmap: Bitmap,
+        maxResults: Int = 5,
+        minSimilarity: Float = CONFIDENCE_THRESHOLD,
+        gridSize: Int = 3          // 3×3 = 9 cells
+    ): List<DetectionResult> {
+        if (!modelLoaded || !databaseLoaded) return emptyList()
+
+        data class CellResult(
+            val cellRow: Int, val cellCol: Int,
+            val scores: List<DetectionResult>   // full ranked list for this cell
+        )
+
+        val cellW = bitmap.width  / gridSize.toFloat()
+        val cellH = bitmap.height / gridSize.toFloat()
+
+        // Run inference on every grid cell
+        val cellResults = mutableListOf<CellResult>()
+        for (row in 0 until gridSize) {
+            for (col in 0 until gridSize) {
+                val x = (col * cellW).toInt().coerceAtLeast(0)
+                val y = (row * cellH).toInt().coerceAtLeast(0)
+                val w = cellW.toInt().coerceAtMost(bitmap.width  - x)
+                val h = cellH.toInt().coerceAtMost(bitmap.height - y)
+                if (w <= 0 || h <= 0) continue
+
+                val crop = Bitmap.createBitmap(bitmap, x, y, w, h)
+                val buf  = preprocessImage(crop)
+                val vec  = extractEmbedding(buf)
+                val scores = compareWithDatabase(vec)
+                cellResults += CellResult(row, col, scores)
+            }
+        }
+
+        // For each brand: find which cell gave the highest similarity
+        val brandBest = mutableMapOf<String, Pair<Float, CellResult>>()
+        for (cell in cellResults) {
+            for (det in cell.scores) {
+                val prev = brandBest[det.brand]
+                if (prev == null || det.similarity > prev.first) {
+                    brandBest[det.brand] = Pair(det.similarity, cell)
+                }
+            }
+        }
+
+        // Build final results: use the best-cell similarity + its centre as imageX/Y
+        return brandBest.entries
+            .filter  { (_, v) -> v.first >= minSimilarity }
+            .sortedByDescending { (_, v) -> v.first }
+            .take(maxResults)
+            .map { (brand, v) ->
+                val (sim, cell) = v
+                // Centre of the winning cell in normalised [0,1] coordinates
+                val imgX = ((cell.cellCol + 0.5f) / gridSize).coerceIn(0f, 1f)
+                val imgY = ((cell.cellRow + 0.5f) / gridSize).coerceIn(0f, 1f)
+                Log.d(TAG, "📍 $brand → sim=${"%.3f".format(sim)} cell=(${cell.cellRow},${cell.cellCol}) imgXY=(${"%.2f".format(imgX)}, ${"%.2f".format(imgY)})")
+                DetectionResult(brand, sim, imgX, imgY)
+            }
+    }
 
     companion object { private const val TAG = "LogoDetector" }
 }

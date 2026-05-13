@@ -1,14 +1,15 @@
-package com.example.mallar.ar
+package com.example.mallar.ui.ar
 
 import com.example.mallar.data.GraphNode
+import com.example.mallar.navigation.BearingCalculator
 import kotlin.math.*
 
 // ── Scale ─────────────────────────────────────────────────────────────────────
 const val AR_SCALE: Float = 0.05f
 
 // ── Arrow placement ───────────────────────────────────────────────────────────
-const val ARROW_Y_OFFSET: Float  = 0.05f
-const val ARROW_SPACING_M: Float = 1.0f
+const val AR_ARROW_Y_OFFSET: Float  = 0.05f
+const val AR_ARROW_SPACING_M: Float = 1.0f
 
 // ─────────────────────────────────────────────────────────────────────────────
 data class ArPosition(val x: Float, val y: Float, val z: Float)
@@ -212,12 +213,12 @@ class ArCoordinateTransformer(
 
         val rad  = Math.toRadians(headingOffsetDeg.toDouble())
         val cosR = cos(rad).toFloat()
-        val sinR = sin(rad).toFloat()
+        val findS = sin(rad).toFloat()
 
         return ArPosition(
-            x =  rawX * cosR - rawZ * sinR,
-            y = ARROW_Y_OFFSET,
-            z =  rawX * sinR + rawZ * cosR
+            x =  rawX * cosR - rawZ * findS,
+            y = AR_ARROW_Y_OFFSET,
+            z =  rawX * findS + rawZ * cosR
         )
     }
 
@@ -243,15 +244,15 @@ class ArCoordinateTransformer(
 
             val arrowRotation = (bearingDeg + ARROW_GLB_FORWARD_OFFSET + 360f) % 360f
 
-            val arrowCount = (segLen / ARROW_SPACING_M).toInt().coerceAtLeast(1)
+            val arrowCount = (segLen / AR_ARROW_SPACING_M).toInt().coerceAtLeast(1)
 
             for (k in 0 until arrowCount) {
                 if (segIdx == 0 && k == 0) continue   // skip first to avoid start-pin overlap
-                val t = (k + 0.5f) * ARROW_SPACING_M
+                val t = (k + 0.5f) * AR_ARROW_SPACING_M
                 result += ArrowPlacement(
                     position = ArPosition(
                         x = p1.x + dirX * t,
-                        y = ARROW_Y_OFFSET,
+                        y = AR_ARROW_Y_OFFSET,
                         z = p1.z + dirZ * t
                     ),
                     yRotationDeg = arrowRotation,
@@ -429,19 +430,13 @@ fun quaternionAroundY(angleDeg: Float): FloatArray {
 
 // ─────────────────────────────────────────────────────────────────────────────
 /**
- * Compute the GPS bearing (degrees, clockwise from true north) from
- * [startNode] to [endNode] using the Haversine formula.
+ * Compute the map bearing (degrees, clockwise from North) from
+ * [startNode] to [endNode].
  *
- * Node coordinates are assumed to be in pixel/map space, NOT lat/lon.
- * For a flat mall map the bearing is the simple 2D angle:
- *   bearing = atan2(Δx, −Δy) converted to 0–360°.
+ * Delegates to BearingCalculator.mapBearing which uses:
+ *   atan2(dx, −dy)  where dx = East component, dy = South component (map Y down).
  *
- * If your GraphNode stores real lat/lon, replace this with a proper
- * Haversine bearing calculation.
+ * Result normalised to [0, 360).
  */
-fun computeMapBearing(startNode: GraphNode, endNode: GraphNode): Float {
-    val dx = (endNode.x - startNode.x).toFloat()
-    val dy = (endNode.y - startNode.y).toFloat()
-    val bearingRad = atan2(dx.toDouble(), (-dy).toDouble())
-    return ((Math.toDegrees(bearingRad).toFloat()) + 360f) % 360f
-}
+fun computeMapBearing(startNode: GraphNode, endNode: GraphNode): Float =
+    BearingCalculator.mapBearing(startNode, endNode)

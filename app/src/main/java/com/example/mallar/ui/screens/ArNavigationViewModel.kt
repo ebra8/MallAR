@@ -4,7 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.mallar.ar.NavigationPhase
 import com.example.mallar.ar.StartResult
-import com.example.mallar.ar.TurnHint
+import com.example.mallar.ui.ar.TurnHint
+import com.example.mallar.navigation.TurnDirection
 import com.example.mallar.data.AStarDirection
 import com.example.mallar.data.AStarPath
 import com.example.mallar.data.GraphNode
@@ -64,6 +65,12 @@ data class ArNavigationUiState(
     val debugRawHeadingDeg: Float = 0f,
     val debugCalculatedBearing: Float = 0f,
     val debugAppliedOffset: Float = 0f,
+
+    // ── Step tracking ───────────────────────────────────────────────────────────────
+    /** Total steps counted this navigation session (hardware or software). */
+    val sessionStepCount: Long = 0L,
+    /** Estimated distance walked via dead-reckoning (metres). */
+    val sessionDistanceM: Float = 0f
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -257,6 +264,23 @@ class ArNavigationViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Called from StepTracker.onStep via DisposableEffect in the Screen.
+     *
+     * Updates session step count and dead-reckoning distance in the UI.
+     * The actual position advance is handled by IndoorPositionTracker
+     * (via NavigationEngine.onStep) in a full integration.
+     * Here we just persist the stats for display.
+     */
+    fun onStepDetected(totalSteps: Long, distanceMetres: Float) {
+        _uiState.update {
+            it.copy(
+                sessionStepCount = totalSteps,
+                sessionDistanceM = distanceMetres
+            )
+        }
+    }
+
     fun onRerouteTriggered(userArX: Float, userArZ: Float, onNewPathReady: (List<GraphNode>) -> Unit) {
         val graph = MallGraphRepository.loadedGraph ?: return
         val dest  = _uiState.value.destinationNode ?: return
@@ -267,7 +291,7 @@ class ArNavigationViewModel : ViewModel() {
         // Actually, we can use the currently closest node from the path as a fallback.
         // For now, let's just log or show a message.
         updateStatusText("🔄 Rerouting...")
-        
+
         // TODO: Map AR (x,z) back to Map (x,y) to find nearest node, then A* to dest.
         // This requires the inverse of transformer.toArLocal().
     }

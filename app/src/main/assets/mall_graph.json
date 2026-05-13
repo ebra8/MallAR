@@ -347,7 +347,7 @@
       "y": 401.0,
       "shopId": 14,
       "shopName": "BCBG",
-        "logo": "logos/BCBGMAXAZRIA.png"
+      "logo": "logos/BCBGMAXAZRIA.png"
     },
     {
       "id": 50,
@@ -1296,7 +1296,7 @@
     {
       "id": 177,
       "x": 764.0,
-      "y": 154.0,
+      "y": 159.0,
       "shopId": 70,
       "shopName": "Bershka",
       "logo": "logos/Bershka.png"
@@ -1304,28 +1304,28 @@
     {
       "id": 178,
       "x": 804.0,
-      "y": 154.0,
+      "y": 159.0,
       "shopId": null,
       "shopName": null
     },
     {
       "id": 179,
       "x": 824.0,
-      "y": 154.0,
+      "y": 159.0,
       "shopId": null,
       "shopName": null
     },
     {
       "id": 180,
       "x": 844.0,
-      "y": 154.0,
+      "y": 159.0,
       "shopId": null,
       "shopName": null
     },
     {
       "id": 181,
       "x": 865.0,
-      "y": 154.0,
+      "y": 159.0,
       "shopId": 71,
       "shopName": "Kiko Milano",
       "logo": "logos/KIKO MILANO.png"
@@ -1333,21 +1333,21 @@
     {
       "id": 182,
       "x": 884.0,
-      "y": 154.0,
+      "y": 159.0,
       "shopId": null,
       "shopName": null
     },
     {
       "id": 183,
       "x": 904.0,
-      "y": 154.0,
+      "y": 159.0,
       "shopId": null,
       "shopName": null
     },
     {
       "id": 184,
       "x": 912.0,
-      "y": 142.0,
+      "y": 147.0,
       "shopId": 72,
       "shopName": "Oxygen",
       "logo": "logos/OXYGENE.png"
@@ -1355,14 +1355,14 @@
     {
       "id": 185,
       "x": 930.0,
-      "y": 142.0,
+      "y": 147.0,
       "shopId": null,
       "shopName": null
     },
     {
       "id": 186,
       "x": 948.0,
-      "y": 142.0,
+      "y": 147.0,
       "shopId": 73,
       "shopName": "Esla",
       "logo": "logos/ESLA.png"
@@ -1370,7 +1370,7 @@
     {
       "id": 187,
       "x": 966.0,
-      "y": 142.0,
+      "y": 147.0,
       "shopId": 74,
       "shopName": "OXXO",
       "logo": "logos/OXXO.png"
@@ -1378,14 +1378,14 @@
     {
       "id": 188,
       "x": 984.0,
-      "y": 142.0,
+      "y": 147.0,
       "shopId": null,
       "shopName": null
     },
     {
       "id": 189,
       "x": 1002.0,
-      "y": 142.0,
+      "y": 147.0,
       "shopId": 75,
       "shopName": "Mazaya",
       "logo": "logos/Mazaya.png"
@@ -1393,14 +1393,14 @@
     {
       "id": 190,
       "x": 1029.0,
-      "y": 142.0,
+      "y": 147.0,
       "shopId": null,
       "shopName": null
     },
     {
       "id": 191,
       "x": 1045.0,
-      "y": 142.0,
+      "y": 147.0,
       "shopId": null,
       "shopName": null
     },
@@ -2049,7 +2049,7 @@
       "y": 174.0,
       "shopId": 99,
       "shopName": "Sunglass Hut",
-      "logo": "logos/Sunglass Hut.png"
+      "logo": "logos/sunglass hut.png"
     },
     {
       "id": 281,
@@ -2057,7 +2057,7 @@
       "y": 174.0,
       "shopId": 100,
       "shopName": "Pandora",
-      "logo": "logos/Pandora.png"
+      "logo": "logos/pandora.png"
     },
     {
       "id": 282,

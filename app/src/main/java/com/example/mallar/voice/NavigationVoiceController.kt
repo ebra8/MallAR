@@ -266,6 +266,7 @@ class NavigationVoiceController(private val voice: VoiceManager) {
         val now = System.currentTimeMillis()
         if (now - lastSpeakMs < VOICE_COOLDOWN_MS) return false
         lastSpeakMs = now
+        ConversationContext.recordNavigationInstruction(text)
         voice.speak(text)
         return true
     }
@@ -273,50 +274,95 @@ class NavigationVoiceController(private val voice: VoiceManager) {
     /** Speak immediately, bypassing cooldown. */
     private fun speakNow(text: String, force: Boolean = false) {
         lastSpeakMs = System.currentTimeMillis()
+        ConversationContext.recordNavigationInstruction(text)
         voice.speak(text, force = force)
     }
 
     // ── Text builders (bilingual) ─────────────────────────────────────────────
 
-    private fun buildGreetingText(destination: String?, distM: Int): String =
-        when (voice.language) {
-            NavigationLanguage.ARABIC ->
-                "بدء الاتتجاه${if (destination != null) " إلى $destination" else ""}. المسافة الإجمالية $distM متر."
-            NavigationLanguage.ENGLISH ->
-                "Navigation started${if (destination != null) " to $destination" else ""}. Total distance: $distM metres."
+    private fun buildGreetingText(destination: String?, distM: Int): String {
+        val idx = ConversationContext.nextVariationIndex(4)
+        return when (voice.language) {
+            NavigationLanguage.ARABIC -> {
+                val opts = listOf(
+                    "بدأنا${if (destination != null) " التوجيه إلى $destination" else " التوجيه"}. المسافة الإجمالية $distM متر.",
+                    "يلا بينا${if (destination != null) " على $destination" else ""} — حوالي $distM متر.",
+                    "تمام${if (destination != null) "، هنوصل $destination" else ""}. المسافة $distM متر.",
+                    "شغّالين${if (destination != null) " لحد $destination" else ""}. تقريباً $distM متر."
+                )
+                opts[idx]
+            }
+            NavigationLanguage.ENGLISH -> {
+                val opts = listOf(
+                    "Navigation started${if (destination != null) " to $destination" else ""}. Total distance: $distM metres.",
+                    "Let's go${if (destination != null) " to $destination" else ""} — about $distM metres.",
+                    "You're on your way${if (destination != null) " to $destination" else ""}. Roughly $distM metres.",
+                    "Route active${if (destination != null) " toward $destination" else ""}. $distM metres total."
+                )
+                opts[idx]
+            }
         }
+    }
 
-    private fun buildApproachText(direction: AStarDirection, distM: Int): String =
-        when (voice.language) {
+    private fun buildApproachText(direction: AStarDirection, distM: Int): String {
+        val idx = ConversationContext.nextVariationIndex(3)
+        return when (voice.language) {
             NavigationLanguage.ARABIC -> when (direction) {
-                AStarDirection.RIGHT    -> "اتجه يميناً بعد $distM متر"
-                AStarDirection.LEFT     -> "اتجه يساراً بعد $distM متر"
-                AStarDirection.STRAIGHT -> "استمر للأمام لمسافة $distM متر"
-                AStarDirection.ARRIVED  -> arrivedText()
+                AStarDirection.RIGHT -> listOf(
+                    "اتجه يميناً بعد $distM متر",
+                    "لف يمين بعد حوالي $distM متر",
+                    "خد يمين بعد $distM متر"
+                )[idx]
+                AStarDirection.LEFT -> listOf(
+                    "اتجه يساراً بعد $distM متر",
+                    "لف يسار بعد حوالي $distM متر",
+                    "خد شمال بعد $distM متر"
+                )[idx]
+                AStarDirection.STRAIGHT -> listOf(
+                    "استمر للأمام لمسافة $distM متر",
+                    "كمل على طول حوالي $distM متر",
+                    "امشي عدل $distM متر"
+                )[idx]
+                AStarDirection.ARRIVED -> arrivedText()
             }
             NavigationLanguage.ENGLISH -> when (direction) {
-                AStarDirection.RIGHT    -> "Turn right in $distM metres"
-                AStarDirection.LEFT     -> "Turn left in $distM metres"
-                AStarDirection.STRAIGHT -> "Continue straight for $distM metres"
-                AStarDirection.ARRIVED  -> arrivedText()
+                AStarDirection.RIGHT -> listOf(
+                    "Turn right in $distM metres",
+                    "Bear right in about $distM metres",
+                    "Right turn in $distM metres"
+                )[idx]
+                AStarDirection.LEFT -> listOf(
+                    "Turn left in $distM metres",
+                    "Bear left in about $distM metres",
+                    "Left turn in $distM metres"
+                )[idx]
+                AStarDirection.STRAIGHT -> listOf(
+                    "Continue straight for $distM metres",
+                    "Go straight for about $distM metres",
+                    "Keep straight for $distM metres"
+                )[idx]
+                AStarDirection.ARRIVED -> arrivedText()
             }
         }
+    }
 
-    private fun buildNowText(direction: AStarDirection): String =
-        when (voice.language) {
+    private fun buildNowText(direction: AStarDirection): String {
+        val idx = ConversationContext.nextVariationIndex(3)
+        return when (voice.language) {
             NavigationLanguage.ARABIC -> when (direction) {
-                AStarDirection.RIGHT    -> "اتجه يميناً الآن"
-                AStarDirection.LEFT     -> "اتجه يساراً الآن"
-                AStarDirection.STRAIGHT -> "استمر للأمام"
-                AStarDirection.ARRIVED  -> arrivedText()
+                AStarDirection.RIGHT -> listOf("اتجه يميناً الآن", "يمين", "لف يمين دلوقتي")[idx]
+                AStarDirection.LEFT -> listOf("اتجه يساراً الآن", "يسار", "لف يسار دلوقتي")[idx]
+                AStarDirection.STRAIGHT -> listOf("استمر للأمام", "كمل على طول", "امشي عدل")[idx]
+                AStarDirection.ARRIVED -> arrivedText()
             }
             NavigationLanguage.ENGLISH -> when (direction) {
-                AStarDirection.RIGHT    -> "Turn right now"
-                AStarDirection.LEFT     -> "Turn left now"
-                AStarDirection.STRAIGHT -> "Go straight"
-                AStarDirection.ARRIVED  -> arrivedText()
+                AStarDirection.RIGHT -> listOf("Turn right now", "Right here", "Take the right")[idx]
+                AStarDirection.LEFT -> listOf("Turn left now", "Left here", "Take the left")[idx]
+                AStarDirection.STRAIGHT -> listOf("Go straight", "Continue ahead", "Keep going straight")[idx]
+                AStarDirection.ARRIVED -> arrivedText()
             }
         }
+    }
 
     private fun buildWaypointText(name: String): String =
         when (voice.language) {

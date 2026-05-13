@@ -1,17 +1,13 @@
 package com.example.mallar.ui.screens
 
 
-
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.util.Log
 import androidx.compose.material.icons.filled.SmartToy
-import com.example.mallar.chat.ChatBottomSheet
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -23,6 +19,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -36,6 +33,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -45,127 +44,233 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.example.mallar.chat.ChatBottomSheet
+import com.example.mallar.voice.VoiceAssistantManager
+import com.example.mallar.voice.VoiceAssistantOverlay
+import com.example.mallar.voice.VoiceAssistantStatus
+import com.example.mallar.voice.FloatingVoiceButton
 import com.example.mallar.data.AStarPath
+import com.example.mallar.data.LandmarkDetection
+import com.example.mallar.data.LocalizationResult
 import com.example.mallar.data.MallGraphRepository
 import com.example.mallar.data.Place
 import com.example.mallar.data.PlaceRepository
+import com.example.mallar.data.tier
+import com.example.mallar.data.LocalizationTier
+import com.example.mallar.ml.LocalizationEngine
 import com.example.mallar.ml.LogoDetector
 import com.example.mallar.ui.theme.*
-import com.google.common.util.concurrent.ListenableFuture
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
-// ── Global navigation state (start + end + A* path) ──────────────────────────
+// ── Global navigation state (start + end + A* path) ──────────────────────────────
 object NavigationState {
-    var startPlace: Place?       = null   // where the user IS (scanned start)
-    var selectedPlace: Place?    = null   // destination (end point)
-    var estimatedDistance: Int   = 0
-    var estimatedMinutes: Int    = 0
-    var aStarPath: AStarPath?    = null   // full A* result
+    var startPlace: Place?           = null
+    var selectedPlace: Place?        = null
+    var estimatedDistance: Int       = 0
+    var estimatedMinutes: Int        = 0
+    var aStarPath: AStarPath?        = null
+    var startWithAr: Boolean         = false
+    var estimatedHeadingDeg: Float?  = null
+
+    /** Voice + live guidance pick Arabic vs English TTS (set from STT when user speaks). */
+    var preferArabicVoice: Boolean =
+        java.util.Locale.getDefault().language.startsWith("ar")
 }
 
-// ── Screen flow states ────────────────────────────────────────────────────────
-enum class ScanState { IDLE, SCANNING, FOUND, NOT_FOUND }
+enum class ScanState { IDLE, SCANNING, LOCALIZING, FOUND, NOT_FOUND }
 
 enum class ScreenFlow {
-    CAMERA_IDLE,           // camera visible, bottom bar shown
-    SCAN_CONFIRM,          // scan detected brand — confirm start location
-    PICK_DESTINATION,      // user confirmed start → now search for destination
-    DESTINATION_DETAIL,    // destination chosen → show detail card + Start button
-    COMPUTING              // A* running
+    CAMERA_IDLE,
+    LOCALIZATION_CONFIRM,
+    SCAN_CONFIRM,
+    PICK_DESTINATION,
+    DESTINATION_DETAIL,
+    COMPUTING
 }
 
-// ── Main Screen ───────────────────────────────────────────────────────────────
 @Composable
 fun LogoScanScreen(
     onSettingsClick: () -> Unit,
-    onStoreSelected: (Boolean) -> Unit   // navigate to ArNavigation (true) or StaticMap (false)
+    onStoreSelected: (Boolean) -> Unit
 ) {
     val context        = LocalContext.current
     var backPressedTime by remember { mutableLongStateOf(0L) }
-
-    BackHandler {
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - backPressedTime < 2000) {
-            (context as? android.app.Activity)?.finish()
-        } else {
-            backPressedTime = currentTime
-            Toast.makeText(context, "Press back again to exit", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    var allPlaces by remember { mutableStateOf<List<Place>>(emptyList()) }
-    var mallGraph by remember { mutableStateOf<com.example.mallar.data.MallGraph?>(null) }
+    var allPlaces    by remember { mutableStateOf<List<Place>>(emptyList()) }
+    var mallGraph    by remember { mutableStateOf<com.example.mallar.data.MallGraph?>(null) }
     var logoDetector by remember { mutableStateOf<LogoDetector?>(null) }
+    var isLoading    by remember { mutableStateOf(true) }
 
-    val scanRequested  = remember { AtomicBoolean(false) }
+    val scanRequested   = remember { AtomicBoolean(false) }
+    val analysisAllowed = remember { AtomicBoolean(false) }
 
     LaunchedEffect(Unit) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val loadedPlaces = PlaceRepository.load(context)
-            val loadedGraph = MallGraphRepository.load(context)
+            val loadedPlaces   = PlaceRepository.load(context)
+            val loadedGraph    = MallGraphRepository.load(context)
             val loadedDetector = LogoDetector(context)
-
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                allPlaces = loadedPlaces
-                mallGraph = loadedGraph
+                allPlaces    = loadedPlaces
+                mallGraph    = loadedGraph
                 logoDetector = loadedDetector
+                isLoading    = false
             }
         }
     }
 
-    // ── State ─────────────────────────────────────────────────────────────────
-    var flow           by remember { mutableStateOf(ScreenFlow.CAMERA_IDLE) }
-    var scanState      by remember { mutableStateOf(ScanState.IDLE) }
+    var flow               by remember { mutableStateOf(ScreenFlow.CAMERA_IDLE) }
+    var scanState          by remember { mutableStateOf(ScanState.IDLE) }
+    var detectedBrand      by remember { mutableStateOf<String?>(null) }
+    var detectedScore      by remember { mutableStateOf(0f) }
+    var startPlace         by remember { mutableStateOf<Place?>(null) }
+    var destination        by remember { mutableStateOf<Place?>(null) }
+    var searchQuery        by remember { mutableStateOf("") }
+    var showChatBot        by remember { mutableStateOf(false) }
+    var chatPath           by remember { mutableStateOf<AStarPath?>(null) }
+    var localizationResult by remember { mutableStateOf<LocalizationResult?>(null) }
+    val latestBitmap       = remember { AtomicReference<Bitmap?>(null) }
 
-    var detectedBrand  by remember { mutableStateOf<String?>(null) }
-    var detectedScore  by remember { mutableStateOf(0f) }
-    var startPlace     by remember { mutableStateOf<Place?>(null) }
-    var destination    by remember { mutableStateOf<Place?>(null) }
+    // ── Voice Assistant ───────────────────────────────────────────────────────
+    var showVoiceAssistant by remember { mutableStateOf(false) }
+    val voiceAssistant = remember { VoiceAssistantManager(context) }
+    val voiceUiState by voiceAssistant.uiState.collectAsState()
 
-    var searchQuery    by remember { mutableStateOf("") }
-    var showChatBot    by remember { mutableStateOf(false) }
-    var chatPath       by remember { mutableStateOf<AStarPath?>(null) }
+    DisposableEffect(Unit) {
+        voiceAssistant.initialize()
+        voiceAssistant.graphProvider = { mallGraph }
+        voiceAssistant.navStateProvider = {
+            runCatching { com.example.mallar.navigation.NavigationSessionManager.instance.sessionState.value }.getOrNull()
+        }
+        voiceAssistant.onNavigateTo = { shopName, isArabic ->
+            NavigationState.preferArabicVoice = isArabic
+            val graph = mallGraph
+            if (graph == null) {
+                null
+            } else {
+                val destPlace = allPlaces.firstOrNull { it.brand.equals(shopName, ignoreCase = true) }
+                    ?: allPlaces.firstOrNull { it.brand.contains(shopName, ignoreCase = true) }
+                if (destPlace != null) {
+                    destination = destPlace
+                    NavigationState.selectedPlace = destPlace
+                    val path = MallGraphRepository.aStar(graph, startPlace?.id ?: -1, destPlace.id)
+                    if (path != null) {
+                        NavigationState.aStarPath = path
+                        NavigationState.startPlace = startPlace
+                        NavigationState.startWithAr = false
+                        NavigationState.estimatedDistance = (path.totalDistancePx / 4.48f).toInt()
+                        NavigationState.estimatedMinutes = (NavigationState.estimatedDistance / 80f).coerceIn(1f, 20f).toInt()
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            showVoiceAssistant = false
+                            onStoreSelected(false)
+                        }, 2000L)
+                        path
+                    } else null
+                } else null
+            }
+        }
+        voiceAssistant.onNavigateWithOrigin = { originShop, destShop, isArabic ->
+            NavigationState.preferArabicVoice = isArabic
+            val graph = mallGraph
+            if (graph == null) {
+                null
+            } else {
+                val startP = allPlaces.firstOrNull { it.brand.equals(originShop, ignoreCase = true) }
+                    ?: allPlaces.firstOrNull { it.brand.contains(originShop, ignoreCase = true) }
+                val destP = allPlaces.firstOrNull { it.brand.equals(destShop, ignoreCase = true) }
+                    ?: allPlaces.firstOrNull { it.brand.contains(destShop, ignoreCase = true) }
+                if (startP == null || destP == null) {
+                    null
+                } else {
+                    startPlace = startP
+                    destination = destP
+                    NavigationState.startPlace = startP
+                    NavigationState.selectedPlace = destP
+                    val path = MallGraphRepository.aStar(graph, startP.id, destP.id)
+                    if (path == null) {
+                        null
+                    } else {
+                        NavigationState.aStarPath = path
+                        NavigationState.startWithAr = false
+                        NavigationState.estimatedDistance = (path.totalDistancePx / 4.48f).toInt()
+                        NavigationState.estimatedMinutes = (NavigationState.estimatedDistance / 80f).coerceIn(1f, 20f).toInt()
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            showVoiceAssistant = false
+                            onStoreSelected(false)
+                        }, 1800L)
+                        path
+                    }
+                }
+            }
+        }
+        voiceAssistant.onStopNavigation = { showVoiceAssistant = false }
+        onDispose { voiceAssistant.destroy() }
+    }
 
-    val latestBitmap   = remember { AtomicReference<Bitmap?>(null) }
+    BackHandler {
+        when (flow) {
+            ScreenFlow.DESTINATION_DETAIL -> { flow = ScreenFlow.PICK_DESTINATION; destination = null }
+            ScreenFlow.PICK_DESTINATION   -> {
+                searchQuery = ""
+                flow = if (startPlace != null) ScreenFlow.SCAN_CONFIRM else ScreenFlow.CAMERA_IDLE
+            }
+            ScreenFlow.LOCALIZATION_CONFIRM -> {
+                flow = ScreenFlow.CAMERA_IDLE; scanState = ScanState.IDLE; localizationResult = null
+            }
+            ScreenFlow.SCAN_CONFIRM -> {
+                flow = ScreenFlow.CAMERA_IDLE; scanState = ScanState.IDLE; detectedBrand = null
+            }
+            ScreenFlow.CAMERA_IDLE -> {
+                val currentTime = System.currentTimeMillis()
+                if (currentTime - backPressedTime < 2000) {
+                    (context as? android.app.Activity)?.finish()
+                } else {
+                    backPressedTime = currentTime
+                    Toast.makeText(context, "Press back again to exit", Toast.LENGTH_SHORT).show()
+                }
+            }
+            else -> { flow = ScreenFlow.CAMERA_IDLE }
+        }
+    }
 
-    // The brand detected by the ML model matched with a Place from places.json
     val detectedPlace = remember(detectedBrand) {
         val b = detectedBrand ?: return@remember null
-        // Try exact match first, then partial
         allPlaces.firstOrNull { it.brand.equals(b, ignoreCase = true) }
             ?: allPlaces.firstOrNull { it.brand.contains(b, ignoreCase = true) }
             ?: allPlaces.firstOrNull { b.replace(" ", "").contains(it.brand.replace(" ", ""), ignoreCase = true) }
     }
 
-    // Filtered places for destination search
     val filteredPlaces = remember(searchQuery, allPlaces, startPlace) {
-        val base = if (searchQuery.isBlank()) allPlaces else
-            allPlaces.filter { it.brand.contains(searchQuery, ignoreCase = true) }
-        // Exclude the start place from destination options
+        val base = if (searchQuery.isBlank()) allPlaces
+                   else allPlaces.filter { it.brand.contains(searchQuery, ignoreCase = true) }
         base.filter { it.id != startPlace?.id }
     }
 
-    // Compute destination distance using A* when possible, fallback to Euclidean
     val destDistM = remember(destination, startPlace, mallGraph) {
         val d = destination ?: return@remember 0
         val s = startPlace
@@ -174,236 +279,257 @@ fun LogoScanScreen(
             val path = MallGraphRepository.aStar(g, s.id, d.id)
             if (path != null) return@remember (path.totalDistancePx * 0.05).toInt().coerceAtLeast(1)
         }
-        // Fallback: Euclidean between place coords
         val dx = (d.x - (s?.x ?: d.x)).toFloat()
         val dy = (d.y - (s?.y ?: d.y)).toFloat()
         (kotlin.math.sqrt(dx * dx + dy * dy) * 0.05f).toInt().coerceAtLeast(1)
     }
     val destMins = remember(destDistM) { (destDistM / 80f).coerceIn(1f, 20f).toInt() }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    SideEffect {
+        analysisAllowed.set(flow == ScreenFlow.CAMERA_IDLE && scanState != ScanState.LOCALIZING)
+    }
 
-        // ── Camera Preview (always running) ───────────────────────────────────
-        AndroidView(
-            factory = { ctx ->
-                val previewView = PreviewView(ctx).apply {
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                    scaleType = PreviewView.ScaleType.FILL_CENTER
-                }
-                val future: ListenableFuture<ProcessCameraProvider> =
-                    ProcessCameraProvider.getInstance(ctx)
-                val executor = Executors.newSingleThreadExecutor()
-                future.addListener({
-                    try {
-                        val cp = future.get()
-                        val preview = Preview.Builder().build().also {
-                            it.surfaceProvider = previewView.surfaceProvider
-                        }
-                        val ia = ImageAnalysis.Builder()
-                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .build()
-                        ia.setAnalyzer(executor) { proxy ->
+    val previewView = remember(context) {
+        PreviewView(context).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, logoDetector, mallGraph, allPlaces, previewView, context) {
+        val det   = logoDetector
+        val graph = mallGraph
+        if (det == null || graph == null) {
+            onDispose { }
+        } else {
+            val cancelled      = AtomicBoolean(false)
+            val executor       = Executors.newSingleThreadExecutor()
+            var imageAnalysis  : ImageAnalysis? = null
+            var boundProvider  : ProcessCameraProvider? = null
+            val placesSnapshot = allPlaces
+            val providerFuture = ProcessCameraProvider.getInstance(context)
+
+            providerFuture.addListener({
+                if (cancelled.get()) return@addListener
+                try {
+                    val cp = providerFuture.get()
+                    if (cancelled.get()) return@addListener
+                    val preview = Preview.Builder().build().also {
+                        it.setSurfaceProvider(previewView.surfaceProvider)
+                    }
+                    val ia = ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .build()
+                    imageAnalysis = ia
+                    ia.setAnalyzer(executor) { proxy ->
+                        try {
                             val bmp = proxy.toBitmapSafe()
                             if (bmp != null) {
                                 latestBitmap.set(bmp)
-                                if (scanRequested.getAndSet(false)) {
-                                    // ✅ Use the real ML model
-                                    val result = logoDetector?.detect(bmp)
+                                if (analysisAllowed.get() && scanRequested.getAndSet(false)) {
+                                    val result = LocalizationEngine.estimatePose(
+                                        frame   = bmp,
+                                        detector = det,
+                                        graph   = graph,
+                                        places  = placesSnapshot
+                                    )
                                     android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                        if (result != null) {
-                                            Log.d("LogoScan", "✅ Detected: ${result.brand} (${result.similarity})")
-                                            detectedBrand = result.brand
-                                            detectedScore = result.similarity
+                                        if (result.detections.isNotEmpty()) {
+                                            Log.d("LogoScan", "Localization: ${result.detections.size} landmarks, conf=${result.confidence}")
+                                            localizationResult = result
                                             scanState = ScanState.FOUND
                                         } else {
-                                            Log.d("LogoScan", "❌ No logo detected above threshold")
+                                            Log.d("LogoScan", "No landmarks detected")
+                                            localizationResult = null
                                             scanState = ScanState.NOT_FOUND
                                         }
                                     }
                                 }
                             }
-                            proxy.close()
+                        } finally {
+                            try { proxy.close() } catch (_: Exception) { }
                         }
-                        cp.unbindAll()
-                        cp.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, ia)
-                    } catch (e: Exception) {
-                        Log.e("LogoScan", "Camera bind failed", e)
                     }
-                }, ContextCompat.getMainExecutor(ctx))
-                previewView
-            },
-            modifier = Modifier.fillMaxSize()
-        )
+                    cp.unbindAll()
+                    if (cancelled.get()) {
+                        try { ia.clearAnalyzer() } catch (_: Exception) { }
+                        return@addListener
+                    }
+                    cp.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, ia)
+                    boundProvider = cp
+                } catch (e: Exception) {
+                    Log.e("LogoScan", "Camera bind failed", e)
+                }
+            }, ContextCompat.getMainExecutor(context))
 
-        // Sync scanState → flow
+            onDispose {
+                cancelled.set(true)
+                try { imageAnalysis?.clearAnalyzer() } catch (_: Exception) { }
+                try { boundProvider?.unbindAll() } catch (_: Exception) { }
+                executor.shutdown()
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+
+        // CAMERA PREVIEW
+        AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+
         LaunchedEffect(scanState) {
-            if (scanState == ScanState.FOUND) flow = ScreenFlow.SCAN_CONFIRM
+            if (scanState == ScanState.FOUND) flow = ScreenFlow.LOCALIZATION_CONFIRM
         }
 
-        // ── NOT_FOUND toast ───────────────────────────────────────────────────
-        AnimatedVisibility(
-            visible = scanState == ScanState.NOT_FOUND,
-            modifier = Modifier.align(Alignment.Center),
-            enter = fadeIn(), exit = fadeOut()
-        ) {
-            LaunchedEffect(scanState) {
-                if (scanState == ScanState.NOT_FOUND) {
-                    kotlinx.coroutines.delay(2500)
-                    scanState = ScanState.IDLE
+        // ── Loading ───────────────────────────────────────────────────────────
+        AnimatedVisibility(visible = isLoading, modifier = Modifier.align(Alignment.Center),
+            enter = fadeIn(), exit = fadeOut()) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Teal, modifier = Modifier.size(48.dp), strokeWidth = 3.dp)
+                Spacer(Modifier.height(12.dp))
+                Surface(shape = RoundedCornerShape(20.dp), color = Color.Black.copy(0.7f)) {
+                    Text("Initialising mall map…", color = White, fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
                 }
             }
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = Color(0xFFB71C1C).copy(alpha = 0.9f)
-            ) {
-                Text(
-                    "❌  No logo recognized — point camera at a store sign and try again",
+        }
+
+        // ── NOT_FOUND ─────────────────────────────────────────────────────────
+        AnimatedVisibility(visible = scanState == ScanState.NOT_FOUND,
+            modifier = Modifier.align(Alignment.Center), enter = fadeIn(), exit = fadeOut()) {
+            LaunchedEffect(scanState) {
+                if (scanState == ScanState.NOT_FOUND) { kotlinx.coroutines.delay(2500); scanState = ScanState.IDLE }
+            }
+            Surface(shape = RoundedCornerShape(20.dp), color = Color(0xFFB71C1C).copy(0.9f)) {
+                Text("No logo recognised — point camera at a store sign and try again",
                     color = White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 14.dp)
-                )
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 14.dp))
             }
         }
 
         // ── SCANNING spinner ──────────────────────────────────────────────────
-        AnimatedVisibility(
-            visible = scanState == ScanState.SCANNING,
-            modifier = Modifier.align(Alignment.Center),
-            enter = fadeIn(), exit = fadeOut()
-        ) {
+        AnimatedVisibility(visible = scanState == ScanState.SCANNING,
+            modifier = Modifier.align(Alignment.Center), enter = fadeIn(), exit = fadeOut()) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(color = Teal, modifier = Modifier.size(56.dp), strokeWidth = 4.dp)
-                Spacer(modifier = Modifier.height(14.dp))
-                Surface(shape = RoundedCornerShape(20.dp), color = Color.Black.copy(alpha = 0.6f)) {
-                    Text(
-                        "Scanning logo…",
-                        color = White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
-                    )
+                Spacer(Modifier.height(14.dp))
+                Surface(shape = RoundedCornerShape(20.dp), color = Color.Black.copy(0.6f)) {
+                    Text("Scanning logo…", color = White, fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
+                }
+            }
+        }
+
+        // ── LOCALIZING spinner ────────────────────────────────────────────────
+        AnimatedVisibility(visible = scanState == ScanState.LOCALIZING,
+            modifier = Modifier.align(Alignment.Center), enter = fadeIn(), exit = fadeOut()) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Teal, modifier = Modifier.size(64.dp), strokeWidth = 5.dp)
+                Spacer(Modifier.height(14.dp))
+                Surface(shape = RoundedCornerShape(20.dp), color = Color.Black.copy(0.75f)) {
+                    Column(Modifier.padding(horizontal = 24.dp, vertical = 14.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("🔎 Detecting landmarks…", color = White,
+                            fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                        Spacer(Modifier.height(4.dp))
+                        Text("Estimating your position", color = White.copy(0.75f), fontSize = 12.sp)
+                    }
                 }
             }
         }
 
         // ══════════════════════════════════════════════════════════════════════
-        // FLOW: SCAN_CONFIRM — "Is this your current location?"
+        // LOCALIZATION_CONFIRM
         // ══════════════════════════════════════════════════════════════════════
-        AnimatedVisibility(
-            visible = flow == ScreenFlow.SCAN_CONFIRM,
-            enter = slideInVertically(tween(300)) { it / 2 } + fadeIn(tween(250)),
-            exit  = slideOutVertically(tween(200)) { it / 2 } + fadeOut(tween(150))
-        ) {
-            Box(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
-                contentAlignment = Alignment.Center) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth().shadow(28.dp, RoundedCornerShape(28.dp)),
-                    shape = RoundedCornerShape(28.dp), color = White
-                ) {
-                    Column(
-                        modifier = Modifier.padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(
-                            Icons.Filled.MyLocation,
-                            contentDescription = null,
-                            tint = Teal,
-                            modifier = Modifier.size(32.dp)
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            "You are currently at:",
-                            color = TextSecondary, fontSize = 14.sp
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
+        val locResult = localizationResult
+        if (flow == ScreenFlow.LOCALIZATION_CONFIRM && locResult != null) {
+            LocalizationConfirmScreen(
+                result      = locResult,
+                onConfirmed = { chosenDetection ->
+                    val chosenPlace = chosenDetection.place
+                        ?: allPlaces.firstOrNull { p ->
+                            p.brand.equals(chosenDetection.brand, ignoreCase = true) ||
+                            p.brand.contains(chosenDetection.brand, ignoreCase = true)
+                        }
+                    startPlace = chosenPlace
+                    NavigationState.startPlace = chosenPlace
+                    NavigationState.estimatedHeadingDeg = locResult.estimatedHeadingDeg
+                    flow = ScreenFlow.PICK_DESTINATION
+                    scanState = ScanState.IDLE
+                    localizationResult = null
+                },
+                onRescan  = { flow = ScreenFlow.CAMERA_IDLE; scanState = ScanState.IDLE; localizationResult = null },
+                onDismiss = { flow = ScreenFlow.CAMERA_IDLE; scanState = ScanState.IDLE; localizationResult = null }
+            )
+        }
 
-                        // Show logo if we found a matching place
+        // ══════════════════════════════════════════════════════════════════════
+        // SCAN_CONFIRM
+        // ══════════════════════════════════════════════════════════════════════
+        AnimatedVisibility(visible = flow == ScreenFlow.SCAN_CONFIRM,
+            enter = slideInVertically(tween(300)) { it / 2 } + fadeIn(tween(250)),
+            exit  = slideOutVertically(tween(200)) { it / 2 } + fadeOut(tween(150))) {
+            Box(Modifier.fillMaxSize().padding(horizontal = 20.dp), Alignment.Center) {
+                Surface(Modifier.fillMaxWidth().shadow(28.dp, RoundedCornerShape(28.dp)),
+                    RoundedCornerShape(28.dp), color = White) {
+                    Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Filled.MyLocation, null, tint = Teal, modifier = Modifier.size(32.dp))
+                        Spacer(Modifier.height(10.dp))
+                        Text("You are currently at:", color = TextSecondary, fontSize = 14.sp)
+                        Spacer(Modifier.height(6.dp))
                         if (detectedPlace != null) {
-                            Surface(
-                                modifier = Modifier.size(80.dp),
-                                shape = RoundedCornerShape(18.dp),
-                                color = SurfaceLight
-                            ) {
+                            Surface(Modifier.size(80.dp), RoundedCornerShape(18.dp), color = SurfaceLight) {
                                 AsyncImage(
                                     model = ImageRequest.Builder(LocalContext.current)
-                                        .data("file:///android_asset/${detectedPlace.logo}")
-                                        .crossfade(true).build(),
-                                    contentDescription = detectedPlace.brand,
-                                    contentScale = ContentScale.Fit,
-                                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(18.dp)).padding(8.dp)
-                                )
+                                        .data("file:///android_asset/${detectedPlace.logo}").crossfade(true).build(),
+                                    contentDescription = detectedPlace.brand, contentScale = ContentScale.Fit,
+                                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(18.dp)).padding(8.dp))
                             }
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(Modifier.height(10.dp))
                         }
-
-                        Text(
-                            text = detectedBrand ?: "Unknown store",
-                            fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, color = TextPrimary,
-                            textAlign = TextAlign.Center
-                        )
-
+                        Text(detectedBrand ?: "Unknown store", fontWeight = FontWeight.ExtraBold,
+                            fontSize = 26.sp, color = TextPrimary, textAlign = TextAlign.Center)
                         if (detectedPlace == null) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                "(not in mall map — please scan again)",
-                                color = RedAccent, fontSize = 12.sp, textAlign = TextAlign.Center
-                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text("(not in mall map — please scan again)", color = RedAccent,
+                                fontSize = 12.sp, textAlign = TextAlign.Center)
                         }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Match confidence: ${"%.0f".format(detectedScore * 100)}%",
-                            color = TextSecondary, fontSize = 13.sp
-                        )
-
-                        Spacer(modifier = Modifier.height(20.dp))
-
-                        // YES — confirm this as START location
+                        Spacer(Modifier.height(6.dp))
+                        Text("Match confidence: ${"%.0f".format(detectedScore * 100)}%",
+                            color = TextSecondary, fontSize = 13.sp)
+                        Spacer(Modifier.height(20.dp))
                         Button(
                             onClick = {
                                 val start = detectedPlace
                                 if (start != null) {
-                                    startPlace = start
-                                    NavigationState.startPlace = start
-                                    flow = ScreenFlow.PICK_DESTINATION
-                                    scanState = ScanState.IDLE
-                                    detectedBrand = null
+                                    startPlace = start; NavigationState.startPlace = start
+                                    flow = ScreenFlow.PICK_DESTINATION; scanState = ScanState.IDLE; detectedBrand = null
                                 } else {
-                                    // Brand found but not in graph — scan again
-                                    flow = ScreenFlow.CAMERA_IDLE
-                                    scanState = ScanState.IDLE
-                                    detectedBrand = null
+                                    flow = ScreenFlow.CAMERA_IDLE; scanState = ScanState.IDLE; detectedBrand = null
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().height(52.dp),
                             shape = RoundedCornerShape(26.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (detectedPlace != null) Teal else Color.Gray
-                            )
+                            colors = ButtonDefaults.buttonColors(containerColor = if (detectedPlace != null) Teal else Color.Gray)
                         ) {
-                            Text(
-                                if (detectedPlace != null) "Yes, I'm here"
-                                else "Not found — Scan Again",
-                                fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = White
-                            )
+                            Text(if (detectedPlace != null) "Yes, I'm here" else "Not found — Scan Again",
+                                fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = White)
                         }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        // SCAN AGAIN
+                        Spacer(Modifier.height(10.dp))
                         OutlinedButton(
-                            onClick = {
-                                flow = ScreenFlow.CAMERA_IDLE
-                                scanState = ScanState.IDLE
-                                detectedBrand = null
-                            },
+                            onClick = { flow = ScreenFlow.CAMERA_IDLE; scanState = ScanState.IDLE; detectedBrand = null },
                             modifier = Modifier.fillMaxWidth().height(52.dp),
                             shape = RoundedCornerShape(26.dp),
                             border = androidx.compose.foundation.BorderStroke(2.dp, Teal),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Teal)
                         ) {
                             Icon(Icons.Filled.Search, null, tint = Teal, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(Modifier.width(8.dp))
                             Text("Scan Again", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Teal)
                         }
                     }
@@ -412,72 +538,44 @@ fun LogoScanScreen(
         }
 
         // ══════════════════════════════════════════════════════════════════════
-        // FLOW: PICK_DESTINATION — search for where user wants to go
+        // PICK_DESTINATION
         // ══════════════════════════════════════════════════════════════════════
-        AnimatedVisibility(
-            visible = flow == ScreenFlow.PICK_DESTINATION,
-            enter = fadeIn(tween(200)),
-            exit  = fadeOut(tween(150))
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Top bar
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color.Black.copy(alpha = 0.45f))
-                        .statusBarsPadding()
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
-                ) {
+        AnimatedVisibility(visible = flow == ScreenFlow.PICK_DESTINATION,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(250)) { it / 10 },
+            exit  = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it / 10 }) {
+            Column(Modifier.fillMaxSize().background(White)) {
+                Column(Modifier.fillMaxWidth().background(Teal).statusBarsPadding()
+                    .padding(horizontal = 14.dp, vertical = 12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            onClick = {
-                                flow = ScreenFlow.CAMERA_IDLE
-                                startPlace = null
-                                NavigationState.startPlace = null
-                                searchQuery = ""
-                            },
-                            modifier = Modifier.size(40.dp),
-                            shape = CircleShape,
-                            color = White.copy(alpha = 0.9f)
-                        ) {
+                        Surface(onClick = { flow = ScreenFlow.SCAN_CONFIRM; searchQuery = "" },
+                            modifier = Modifier.size(40.dp), shape = CircleShape,
+                            color = White.copy(0.25f)) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary)
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = White)
                             }
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(Modifier.width(10.dp))
                         Column {
-                            Text(
-                                "📍 From: ${startPlace?.brand ?: "?"}",
-                                color = White, fontSize = 12.sp, fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                "Where do you want to go?",
-                                color = White.copy(alpha = 0.7f), fontSize = 11.sp
-                            )
+                            Text("From: ${startPlace?.brand ?: "My Location"}",
+                                color = White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Where do you want to go?", color = White.copy(0.8f), fontSize = 11.sp)
                         }
                     }
-                    Spacer(modifier = Modifier.height(10.dp))
-                    // Search field
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().height(46.dp).shadow(6.dp, RoundedCornerShape(23.dp)),
-                        shape = RoundedCornerShape(23.dp), color = White
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Filled.Search, null, tint = TextSecondary.copy(alpha = 0.6f), modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            BasicTextField(
-                                value = searchQuery,
-                                onValueChange = { searchQuery = it },
+                    Spacer(Modifier.height(10.dp))
+                    Surface(Modifier.fillMaxWidth().height(46.dp).shadow(6.dp, RoundedCornerShape(23.dp)),
+                        RoundedCornerShape(23.dp), color = White) {
+                        Row(Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Search, null, tint = TextSecondary.copy(0.6f), modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            BasicTextField(value = searchQuery, onValueChange = { searchQuery = it },
                                 textStyle = LocalTextStyle.current.copy(fontSize = 15.sp, color = TextPrimary),
                                 modifier = Modifier.weight(1f), singleLine = true,
                                 decorationBox = { inner ->
-                                    if (searchQuery.isEmpty()) Text("Search destination…", color = TextSecondary.copy(alpha = 0.5f), fontSize = 15.sp)
+                                    if (searchQuery.isEmpty()) Text("Search destination…",
+                                        color = TextSecondary.copy(0.5f), fontSize = 15.sp)
                                     inner()
-                                }
-                            )
+                                })
                             if (searchQuery.isNotEmpty()) {
                                 IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(28.dp)) {
                                     Icon(Icons.Filled.Close, null, tint = TextSecondary, modifier = Modifier.size(16.dp))
@@ -486,33 +584,18 @@ fun LogoScanScreen(
                         }
                     }
                 }
-
-                // Store list
-                Surface(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    shape = RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp),
-                    color = White, shadowElevation = 8.dp
-                ) {
-                    LazyColumn(
-                        contentPadding = PaddingValues(top = 8.dp, start = 14.dp, end = 14.dp, bottom = 80.dp),
-                        verticalArrangement = Arrangement.spacedBy(0.dp)
-                    ) {
-                        itemsIndexed(filteredPlaces) { _, place ->
-                            DestinationRow(place = place, onClick = {
-                                destination = place
-                                flow = ScreenFlow.DESTINATION_DETAIL
-                            })
-                            HorizontalDivider(
-                                color = DividerColor.copy(alpha = 0.4f),
-                                thickness = 0.7.dp,
-                                modifier = Modifier.padding(start = 82.dp)
-                            )
-                        }
-                        if (filteredPlaces.isEmpty()) {
-                            item {
-                                Box(Modifier.fillMaxWidth().padding(top = 60.dp), contentAlignment = Alignment.Center) {
-                                    Text("No stores found", color = TextSecondary, fontSize = 16.sp)
-                                }
+                LazyColumn(contentPadding = PaddingValues(top = 8.dp, start = 14.dp, end = 14.dp, bottom = 80.dp),
+                    verticalArrangement = Arrangement.spacedBy(0.dp), modifier = Modifier.fillMaxSize()) {
+                    itemsIndexed(filteredPlaces) { _, place ->
+                        DestinationRow(place = place, startPlace = startPlace, mallGraph = mallGraph,
+                            onClick = { destination = place; flow = ScreenFlow.DESTINATION_DETAIL })
+                        HorizontalDivider(color = DividerColor.copy(0.4f), thickness = 0.7.dp,
+                            modifier = Modifier.padding(start = 82.dp))
+                    }
+                    if (filteredPlaces.isEmpty()) {
+                        item {
+                            Box(Modifier.fillMaxWidth().padding(top = 60.dp), Alignment.Center) {
+                                Text("No stores found", color = TextSecondary, fontSize = 16.sp)
                             }
                         }
                     }
@@ -521,156 +604,102 @@ fun LogoScanScreen(
         }
 
         // ══════════════════════════════════════════════════════════════════════
-        // FLOW: DESTINATION_DETAIL — store card + Start button (matches mockup 2)
+        // DESTINATION_DETAIL
         // ══════════════════════════════════════════════════════════════════════
-        AnimatedVisibility(
-            visible = flow == ScreenFlow.DESTINATION_DETAIL && destination != null,
+        AnimatedVisibility(visible = flow == ScreenFlow.DESTINATION_DETAIL && destination != null,
             enter = fadeIn(tween(200)) + slideInVertically(tween(280)) { it / 10 },
-            exit  = fadeOut(tween(150))
-        ) {
+            exit  = fadeOut(tween(150))) {
             val dest = destination
             if (dest != null) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    // Top bar — back + store name + Search button
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .statusBarsPadding()
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            onClick = { flow = ScreenFlow.PICK_DESTINATION },
-                            modifier = Modifier.size(42.dp), shape = CircleShape,
-                            color = White.copy(alpha = 0.9f)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(0.7f))) {
+                    Row(Modifier.fillMaxWidth().statusBarsPadding()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Surface(onClick = { flow = ScreenFlow.PICK_DESTINATION; destination = null },
+                            modifier = Modifier.size(42.dp), shape = CircleShape, color = White.copy(0.9f)) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary)
                             }
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Surface(
-                            modifier = Modifier.weight(1f).height(44.dp).shadow(6.dp, RoundedCornerShape(22.dp)),
-                            shape = RoundedCornerShape(22.dp), color = White
-                        ) {
-                            Box(Modifier.fillMaxSize().padding(horizontal = 16.dp), contentAlignment = Alignment.CenterStart) {
+                        Spacer(Modifier.width(10.dp))
+                        Surface(Modifier.weight(1f).height(44.dp).shadow(6.dp, RoundedCornerShape(22.dp)),
+                            RoundedCornerShape(22.dp), color = White) {
+                            Box(Modifier.fillMaxSize().padding(horizontal = 16.dp), Alignment.CenterStart) {
                                 Text(dest.brand, color = TextPrimary, fontWeight = FontWeight.Medium, fontSize = 15.sp)
                             }
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Surface(shape = RoundedCornerShape(22.dp), color = Teal, modifier = Modifier.height(44.dp)) {
-                            Box(Modifier.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
-                                Text("Search", color = White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            }
-                        }
                     }
-
-                    // White store card
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 110.dp, start = 16.dp, end = 16.dp)
-                            .shadow(24.dp, RoundedCornerShape(28.dp)),
-                        shape = RoundedCornerShape(28.dp), color = White
-                    ) {
-                        Column(modifier = Modifier.padding(20.dp)) {
+                    Surface(Modifier.fillMaxWidth().align(Alignment.Center)
+                        .padding(horizontal = 16.dp).shadow(24.dp, RoundedCornerShape(28.dp)),
+                        RoundedCornerShape(28.dp), color = White) {
+                        Column(Modifier.padding(20.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Surface(
-                                    modifier = Modifier.size(70.dp),
-                                    shape = RoundedCornerShape(16.dp), color = SurfaceLight
-                                ) {
+                                Surface(Modifier.size(70.dp), RoundedCornerShape(16.dp), color = SurfaceLight) {
                                     AsyncImage(
                                         model = ImageRequest.Builder(context)
                                             .data("file:///android_asset/${dest.logo}").crossfade(true).build(),
-                                        contentDescription = dest.brand,
-                                        contentScale = ContentScale.Fit,
-                                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).padding(8.dp)
-                                    )
+                                        contentDescription = dest.brand, contentScale = ContentScale.Fit,
+                                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).padding(8.dp))
                                 }
-                                Spacer(modifier = Modifier.width(14.dp))
-                                Column(modifier = Modifier.weight(1f)) {
+                                Spacer(Modifier.width(14.dp))
+                                Column(Modifier.weight(1f)) {
                                     Text(dest.brand, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = TextPrimary)
-                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Spacer(Modifier.height(4.dp))
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Filled.LocationOn, null, tint = RedAccent, modifier = Modifier.size(14.dp))
-                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Spacer(Modifier.width(3.dp))
                                         Text("${destDistM}m", color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Spacer(Modifier.width(12.dp))
                                         Icon(Icons.Filled.AccessTime, null, tint = RedAccent, modifier = Modifier.size(14.dp))
-                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Spacer(Modifier.width(3.dp))
                                         Text("${destMins}min", color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
-                                Surface(
-                                    onClick = { flow = ScreenFlow.PICK_DESTINATION; destination = null },
-                                    modifier = Modifier.size(32.dp), shape = CircleShape, color = SurfaceLight
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
+                                Surface(onClick = { flow = ScreenFlow.PICK_DESTINATION; destination = null },
+                                    modifier = Modifier.size(32.dp), shape = CircleShape, color = SurfaceLight) {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                         Icon(Icons.Filled.Close, null, tint = TextSecondary, modifier = Modifier.size(14.dp))
                                     }
                                 }
                             }
-
-                            // Show route info if we have A* start
                             if (startPlace != null) {
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = Teal.copy(alpha = 0.08f)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
+                                Spacer(Modifier.height(10.dp))
+                                Surface(shape = RoundedCornerShape(12.dp), color = Teal.copy(0.08f)) {
+                                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Filled.MyLocation, null, tint = Teal, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            "From: ${startPlace!!.brand}",
-                                            color = Teal, fontSize = 13.sp, fontWeight = FontWeight.Bold
-                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("From: ${startPlace!!.brand}", color = Teal, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
-
-                            Spacer(modifier = Modifier.height(18.dp))
-
-                            // Action Buttons: AR and Static Map
-                            Row(modifier = Modifier.fillMaxWidth()) {
+                            Spacer(Modifier.height(18.dp))
+                            Row(Modifier.fillMaxWidth()) {
                                 Button(
-                                    onClick = {
-                                        startNavigation(mallGraph, startPlace, destination, destDistM, onStoreSelected, true)
-                                    },
+                                    onClick = { startNavigation(mallGraph, startPlace, destination, destDistM, onStoreSelected, useAr = true) },
                                     modifier = Modifier.weight(1f).height(54.dp),
                                     shape = RoundedCornerShape(27.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = Teal)
                                 ) {
                                     Icon(Icons.Filled.ViewInAr, null, tint = White, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Spacer(Modifier.width(8.dp))
                                     Text("AR", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = White)
                                 }
-
-                                Spacer(modifier = Modifier.width(12.dp))
-
+                                Spacer(Modifier.width(12.dp))
                                 Button(
-                                    onClick = {
-                                        startNavigation(mallGraph, startPlace, destination, destDistM, onStoreSelected, false)
-                                    },
+                                    onClick = { startNavigation(mallGraph, startPlace, destination, destDistM, onStoreSelected, useAr = false) },
                                     modifier = Modifier.weight(1f).height(54.dp),
                                     shape = RoundedCornerShape(27.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
                                 ) {
                                     Icon(Icons.Filled.Map, null, tint = White, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Spacer(Modifier.width(8.dp))
                                     Text("Map", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = White)
                                 }
                             }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Text(
-                                "Choose your navigation mode",
-                                color = TextSecondary, fontSize = 13.sp, textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                            Spacer(Modifier.height(10.dp))
+                            Text("Choose your navigation mode", color = TextSecondary, fontSize = 13.sp,
+                                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                         }
                     }
                 }
@@ -678,152 +707,202 @@ fun LogoScanScreen(
         }
 
         // ══════════════════════════════════════════════════════════════════════
-        // FLOW: CAMERA_IDLE — bottom bar with search + scan
+        // CAMERA_IDLE — NEW UI
         // ══════════════════════════════════════════════════════════════════════
-        val showBottomBar = flow == ScreenFlow.CAMERA_IDLE && scanState == ScanState.IDLE
+        val showIdle = flow == ScreenFlow.CAMERA_IDLE && scanState == ScanState.IDLE
 
-        AnimatedVisibility(
-            visible = showBottomBar,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            enter = slideInVertically(tween(250)) { it } + fadeIn(),
-            exit  = slideOutVertically(tween(200)) { it } + fadeOut()
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        brush = androidx.compose.ui.graphics.Brush.verticalGradient(
-                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))
-                        )
-                    )
-                    .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 20.dp)
-            ) {
-                // Tip label
+        // Top bar: Settings + Voice Assistant
+        AnimatedVisibility(visible = showIdle,
+            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+            enter = fadeIn(), exit = fadeOut()) {
+            Row(Modifier.fillMaxWidth().statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                // Settings button
+                Box(Modifier.size(48.dp).clip(CircleShape).background(Color(0xFF1A1A2E))
+                    .clickable { onSettingsClick() }, Alignment.Center) {
+                    Icon(Icons.Default.Settings, "Settings", tint = Color(0xFF00BCD4),
+                        modifier = Modifier.size(22.dp))
+                }
+                // Voice Assistant pill
+                Row(Modifier.clip(RoundedCornerShape(24.dp)).background(Color(0xFF1A1A2E))
+                    .clickable { }.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Mic, null, tint = Color(0xFF00BCD4), modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Voice Assistant", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+
+        // Centre crosshair + hint text
+        AnimatedVisibility(visible = showIdle, modifier = Modifier.align(Alignment.Center),
+            enter = fadeIn(tween(400)), exit = fadeOut(tween(200))) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(bottom = 220.dp)) {
+                Canvas(modifier = Modifier.size(72.dp)) {
+                    val s   = size.minDimension
+                    val c   = center
+                    val r   = s * 0.40f
+                    val arm = s * 0.20f
+                    val gap = s * 0.12f
+                    val col = Color(0xFF00BCD4)
+                    listOf(-1f to -1f, 1f to -1f, -1f to 1f, 1f to 1f).forEach { (sx, sy) ->
+                        drawLine(col, Offset(c.x + sx * gap, c.y + sy * r),
+                            Offset(c.x + sx * (gap + arm), c.y + sy * r), strokeWidth = 3.5f, cap = StrokeCap.Round)
+                        drawLine(col, Offset(c.x + sx * r, c.y + sy * gap),
+                            Offset(c.x + sx * r, c.y + sy * (gap + arm)), strokeWidth = 3.5f, cap = StrokeCap.Round)
+                    }
+                    drawCircle(col, radius = s * 0.06f, center = c)
+                }
+                Spacer(Modifier.height(20.dp))
                 Text(
-                    "📸 Scan a store logo to set your start location, or search your destination",
-                    color = White.copy(alpha = 0.85f),
-                    fontSize = 12.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = Color.White, fontSize = 22.sp)) { append("Point your camera\nat a ") }
+                        withStyle(SpanStyle(color = Color(0xFF00BCD4), fontSize = 22.sp)) { append("store logo") }
+                        withStyle(SpanStyle(color = Color.White, fontSize = 22.sp)) { append("\nto start navigation") }
+                    },
+                    textAlign = TextAlign.Center
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Search field — taps into PICK_DESTINATION with no start
-                    Surface(
-                        modifier = Modifier.weight(1f).height(56.dp)
-                            .shadow(10.dp, RoundedCornerShape(28.dp))
-                            .clickable {
-                                // Allow searching destination even without scanning first
-                                startPlace = NavigationState.startPlace
-                                flow = ScreenFlow.PICK_DESTINATION
-                                searchQuery = ""
-                            },
-                        shape = RoundedCornerShape(28.dp), color = White
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Filled.Search, null, tint = TextSecondary.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text("Search for stores…", color = TextSecondary.copy(alpha = 0.5f), fontSize = 14.sp)
+            }
+        }
+
+        // Bottom: search bar + 3 action buttons
+        AnimatedVisibility(visible = showIdle, modifier = Modifier.align(Alignment.BottomCenter),
+            enter = slideInVertically(tween(280)) { it } + fadeIn(),
+            exit  = slideOutVertically(tween(200)) { it } + fadeOut()) {
+            Column(Modifier.fillMaxWidth().navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+
+                // Search bar
+                Surface(Modifier.fillMaxWidth().height(54.dp).shadow(8.dp, RoundedCornerShape(27.dp))
+                    .clickable { startPlace = NavigationState.startPlace; searchQuery = ""; flow = ScreenFlow.PICK_DESTINATION },
+                    RoundedCornerShape(27.dp), color = Color(0xFF1A1A2E)) {
+                    Row(Modifier.fillMaxSize().padding(horizontal = 18.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Search, null, tint = Color.White.copy(0.5f), modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text("Where to go...", color = Color.White.copy(0.4f), fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0xFF00BCD4)),
+                            Alignment.Center) {
+                            Icon(Icons.Default.Settings, null, tint = Color.White, modifier = Modifier.size(17.dp))
                         }
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    // SCAN button
-                    Button(
-                        onClick = {
-                            if (scanState != ScanState.SCANNING) {
-                                scanState = ScanState.SCANNING
-                                detectedBrand = null
-                                scanRequested.set(true)
+                }
+
+                // 3 buttons panel
+                Surface(Modifier.fillMaxWidth(), RoundedCornerShape(24.dp), color = Color(0xFF111827)) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically) {
+
+                        // Ask Me (chat)
+                        Column(Modifier.weight(1f).clip(RoundedCornerShape(16.dp))
+                            .background(Color(0xFF1E293B)).clickable { showChatBot = true }
+                            .padding(vertical = 14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.SmartToy, null, tint = Color(0xFF00BCD4), modifier = Modifier.size(28.dp))
+                            Spacer(Modifier.height(6.dp))
+                            Text("Ask Me", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Get help", color = Color.White.copy(0.45f), fontSize = 11.sp)
+                        }
+
+                        Spacer(Modifier.width(8.dp))
+
+                        // Scan Logo — big centre button
+                        Column(Modifier.weight(1.3f),
+                            horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(Modifier.size(76.dp).clip(CircleShape)
+                                .background(Brush.radialGradient(listOf(Color(0xFF00ACC1), Color(0xFF00838F))))
+                                .clickable {
+                                    if (scanState != ScanState.SCANNING && !isLoading) {
+                                        scanState = ScanState.SCANNING
+                                        detectedBrand = null
+                                        scanRequested.set(true)
+                                    }
+                                },
+                                contentAlignment = Alignment.Center) {
+                                Canvas(Modifier.size(38.dp)) {
+                                    val arm = size.minDimension * 0.32f
+                                    val gap = size.minDimension * 0.12f
+                                    val s   = size.minDimension * 0.48f
+                                    val c   = center
+                                    listOf(-1f to -1f, 1f to -1f, -1f to 1f, 1f to 1f).forEach { (sx, sy) ->
+                                        drawLine(Color.White, Offset(c.x + sx * gap, c.y + sy * s),
+                                            Offset(c.x + sx * (gap + arm), c.y + sy * s), strokeWidth = 4f, cap = StrokeCap.Round)
+                                        drawLine(Color.White, Offset(c.x + sx * s, c.y + sy * gap),
+                                            Offset(c.x + sx * s, c.y + sy * (gap + arm)), strokeWidth = 4f, cap = StrokeCap.Round)
+                                    }
+                                }
                             }
-                        },
-                        modifier = Modifier.height(56.dp).width(90.dp),
-                        shape = RoundedCornerShape(28.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Teal),
-                        enabled = scanState != ScanState.SCANNING
-                    ) {
-                        Text(
-                            if (scanState == ScanState.SCANNING) "…" else "Scan",
-                            fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = White
-                        )
+                            Spacer(Modifier.height(6.dp))
+                            Text(if (isLoading) "Loading…" else "Scan Logo",
+                                color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Spacer(Modifier.width(8.dp))
+
+                        // Voice Assistant
+                        Column(Modifier.weight(1f).clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (voiceUiState.status != com.example.mallar.voice.VoiceAssistantStatus.IDLE)
+                                    Color(0xFF003B47)
+                                else Color(0xFF1E293B)
+                            )
+                            .clickable { showVoiceAssistant = true }
+                            .padding(vertical = 14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = if (voiceUiState.status == com.example.mallar.voice.VoiceAssistantStatus.LISTENING)
+                                    Icons.Default.MicOff else Icons.Default.Mic,
+                                contentDescription = null,
+                                tint = if (voiceUiState.status != com.example.mallar.voice.VoiceAssistantStatus.IDLE)
+                                    Color(0xFFFFFFFF) else Color(0xFF00BCD4),
+                                modifier = Modifier.size(28.dp)
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text("Voice", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Assistant", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Speak & Navigate", color = Color.White.copy(0.45f), fontSize = 10.sp)
+                        }
                     }
                 }
             }
         }
 
-
-        // ── CHATBOT: Floating "Ask me" button — visible on CAMERA_IDLE ──────────
-        AnimatedVisibility(
-            visible  = flow == ScreenFlow.CAMERA_IDLE && scanState == ScanState.IDLE,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .navigationBarsPadding()
-                .padding(end = 20.dp, bottom = 90.dp),  // sits above the search bar
-            enter = scaleIn(tween(250)) + fadeIn(tween(250)),
-            exit  = scaleOut(tween(200)) + fadeOut(tween(200))
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                // "Ask me" label chip
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = Color(0xFF009688).copy(alpha = 0.92f),
-                    shadowElevation = 4.dp
-                ) {
-                    Text(
-                        text = "Ask me!",
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
+        // ── Voice Assistant Overlay ───────────────────────────────────────────
+        if (showVoiceAssistant) {
+            VoiceAssistantOverlay(
+                uiState   = voiceUiState,
+                onMicTap  = {
+                    if (voiceUiState.status == com.example.mallar.voice.VoiceAssistantStatus.LISTENING) {
+                        voiceAssistant.cancelListening()
+                    } else {
+                        voiceAssistant.startListening()
+                    }
+                },
+                onDismiss = {
+                    voiceAssistant.cancelListening()
+                    showVoiceAssistant = false
                 }
-                // FAB
-                FloatingActionButton(
-                    onClick        = { showChatBot = true },
-                    containerColor = Color(0xFF009688),
-                    contentColor   = Color.White,
-                    shape          = CircleShape,
-                    elevation      = FloatingActionButtonDefaults.elevation(6.dp),
-                    modifier       = Modifier.size(56.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SmartToy,
-                        contentDescription = "Open Mall Assistant",
-                        modifier    = Modifier.size(28.dp)
-                    )
-                }
-            }
+            )
         }
 
-        // ── CHATBOT: Bottom sheet dialog ──────────────────────────────────────
         if (showChatBot) {
             Dialog(
                 onDismissRequest = { showChatBot = false },
-                properties = DialogProperties(
-                    usePlatformDefaultWidth = false,
-                    dismissOnClickOutside   = true
-                )
+                properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = true)
             ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    // Tap outside area to dismiss
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clickable { showChatBot = false }
-                    )
-                    // Sheet at bottom
-                    Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                Box(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize().clickable { showChatBot = false })
+                    Box(Modifier.align(Alignment.BottomCenter)) {
                         ChatBottomSheet(
-                            graph       = mallGraph,
-                            onDismiss   = { showChatBot = false },
+                            graph = mallGraph,
+                            onDismiss = { showChatBot = false },
                             onPathFound = { path: AStarPath ->
                                 chatPath = path
-                                // Auto-set navigation state so user can jump straight to AR
                                 NavigationState.aStarPath = path
                             },
                             onStartNavigation = { useAr ->
@@ -831,25 +910,6 @@ fun LogoScanScreen(
                                 onStoreSelected(useAr)
                             }
                         )
-                    }
-                }
-            }
-        }
-
-        // Settings button — only in CAMERA_IDLE
-        AnimatedVisibility(
-            visible = flow == ScreenFlow.CAMERA_IDLE && scanState == ScanState.IDLE,
-            modifier = Modifier.align(Alignment.TopEnd),
-            enter = fadeIn(), exit = fadeOut()
-        ) {
-            Box(modifier = Modifier.statusBarsPadding().padding(16.dp)) {
-                Surface(
-                    onClick = onSettingsClick,
-                    modifier = Modifier.size(48.dp),
-                    shape = CircleShape, color = White.copy(alpha = 0.88f)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.Settings, "Settings", tint = Teal)
                     }
                 }
             }
@@ -868,76 +928,69 @@ private fun startNavigation(
     val start = startPlace
     val end   = destination
     if (start != null && end != null) {
-        // ── Run A* to get the optimal path ──────────────
-        val path = mallGraph?.let {
-            MallGraphRepository.aStar(it, start.id, end.id)
-        }
-        // Use A* path distance for accurate estimates
-        val realDistM = if (path != null)
-            (path.totalDistancePx * 0.05).toInt().coerceAtLeast(1)
-        else destDistM
-        val realMins = (realDistM / 80f).coerceIn(1f, 20f).toInt()
-
+        val path = mallGraph?.let { MallGraphRepository.aStar(it, start.id, end.id) }
+        val realDistM = if (path != null) (path.totalDistancePx * 0.05).toInt().coerceAtLeast(1) else destDistM
+        val realMins  = (realDistM / 80f).coerceIn(1f, 20f).toInt()
         NavigationState.selectedPlace     = end
         NavigationState.startPlace        = start
         NavigationState.estimatedDistance = realDistM
         NavigationState.estimatedMinutes  = realMins
         NavigationState.aStarPath         = path
+        NavigationState.startWithAr       = useAr
         onStoreSelected(useAr)
     } else if (end != null) {
-        // No scanned start — navigate without start node
         NavigationState.selectedPlace     = end
         NavigationState.estimatedDistance = destDistM
-        NavigationState.estimatedMinutes  = (destDistM / 72).coerceIn(1, 20)
+        NavigationState.estimatedMinutes  = (destDistM / 80).coerceIn(1, 20)
         NavigationState.aStarPath         = null
+        NavigationState.startWithAr       = useAr
         onStoreSelected(useAr)
     }
 }
 
-// ── Destination search row ───────────────────────────────────────────────────
 @Composable
-private fun DestinationRow(place: Place, onClick: () -> Unit) {
-    val distM = remember(place.id) {
-        // Simple Euclidean estimate in pixels * scale — will be overridden by A* when navigation starts
+private fun DestinationRow(
+    place: Place,
+    startPlace: Place?,
+    mallGraph: com.example.mallar.data.MallGraph?,
+    onClick: () -> Unit
+) {
+    val distM = remember(place.id, startPlace?.id, mallGraph) {
+        if (startPlace != null && mallGraph != null) {
+            val path = MallGraphRepository.aStar(mallGraph, startPlace.id, place.id)
+            if (path != null) return@remember (path.totalDistancePx * 0.05).toInt().coerceAtLeast(1)
+        }
         val dx = place.x.toFloat(); val dy = place.y.toFloat()
         (kotlin.math.sqrt(dx * dx + dy * dy) * 0.05f).toInt().coerceAtLeast(1)
     }
     val mins = remember(distM) { (distM / 80f).coerceIn(1f, 10f).toInt() }
 
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Surface(
-            modifier = Modifier.size(60.dp), shape = RoundedCornerShape(13.dp),
-            color = SurfaceLight, shadowElevation = 1.dp
-        ) {
+    Row(Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Surface(Modifier.size(60.dp), RoundedCornerShape(13.dp), color = SurfaceLight, shadowElevation = 1.dp) {
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
                     .data("file:///android_asset/${place.logo}").crossfade(true).build(),
-                contentDescription = place.brand,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(13.dp)).padding(7.dp)
-            )
+                contentDescription = place.brand, contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(13.dp)).padding(7.dp))
         }
-        Spacer(modifier = Modifier.width(14.dp))
+        Spacer(Modifier.width(14.dp))
         Column {
             Text(place.brand, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = TextPrimary)
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.LocationOn, null, tint = RedAccent, modifier = Modifier.size(13.dp))
-                Spacer(modifier = Modifier.width(3.dp))
+                Spacer(Modifier.width(3.dp))
                 Text("${distM}m", color = TextSecondary, fontSize = 12.sp)
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(Modifier.width(10.dp))
                 Icon(Icons.Filled.AccessTime, null, tint = RedAccent, modifier = Modifier.size(13.dp))
-                Spacer(modifier = Modifier.width(3.dp))
+                Spacer(Modifier.width(3.dp))
                 Text("${mins}min", color = TextSecondary, fontSize = 12.sp)
             }
         }
     }
 }
 
-// ── YUV → Bitmap ─────────────────────────────────────────────────────────────
 @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
 private fun ImageProxy.toBitmapSafe(): Bitmap? {
     val image = this.image ?: return null

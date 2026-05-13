@@ -1,14 +1,16 @@
 package com.example.mallar.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -17,153 +19,197 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.mallar.ui.theme.Teal
+import com.example.mallar.R
 import com.example.mallar.ui.theme.TextPrimary
 import com.example.mallar.ui.theme.TextSecondary
 import com.example.mallar.ui.theme.White
 
-@OptIn(ExperimentalMaterial3Api::class)
+private val ScreenBg    = Color(0xFFF5F5FA)
+private val ProfileTeal = Color(0xFF1A8C8C)
+
 @Composable
 fun SettingsScreen(
     onBackClick: () -> Unit,
     onLogoutClick: () -> Unit
 ) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Settings", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = White,
-                    titleContentColor = Teal,
-                    navigationIconContentColor = Teal
-                )
-            )
-        },
-        containerColor = Color(0xFFF8F9FA)
-    ) { padding ->
-        LazyColumn(
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(ScreenBg)
+            .verticalScroll(rememberScrollState())
+    ) {
+
+        // ── Page title ────────────────────────────────────────────────────────
+        Text(
+            text = "Profile",
+            fontSize = 26.sp,
+            fontWeight = FontWeight.Bold,
+            color = ProfileTeal,
+            modifier = Modifier.padding(start = 24.dp, top = 32.dp, bottom = 24.dp)
+        )
+
+        // ── Avatar + edit button ──────────────────────────────────────────────
+        Box(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
         ) {
-            // Profile Section
-            item {
-                ProfileSection()
-            }
-
-            // Settings Categories
-            item {
-                SectionHeader("Account")
-                SettingsItem(Icons.Default.Person, "Edit Profile", "Change your name and info")
-                SettingsItem(Icons.Default.Favorite, "Favorite Stores", "Your saved locations")
-                SettingsItem(Icons.Default.History, "Navigation History", "Where you've been")
-            }
-
-            item {
-                SectionHeader("Preferences")
-                SettingsItem(Icons.Default.Notifications, "Notifications", "Alerts and updates")
-                SettingsItem(Icons.Default.Language, "Language", "English (US)")
-                SettingsItem(Icons.Default.DarkMode, "Dark Mode", "Current: System")
-            }
-
-            item {
-                SectionHeader("Support")
-                SettingsItem(Icons.Default.Help, "Help Center", "FAQs and guides")
-                SettingsItem(Icons.Default.Info, "About MallAR", "Version 1.0.4")
-            }
-
-            item {
-                Spacer(modifier = Modifier.height(32.dp))
-                Button(
-                    onClick = onLogoutClick,
+            // Avatar circle with hardcoded profile photo
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .clip(CircleShape)
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.profile_photo),
+                    contentDescription = "Profile photo",
+                    contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp)
-                        .height(56.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                        .size(80.dp)
+                        .clip(CircleShape)
+                )
+
+                // Delete badge (purely decorative to match UI design)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                        .border(1.dp, Color(0xFFE0E0E0), CircleShape),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Logout, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Logout", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Remove photo",
+                        modifier = Modifier.size(13.dp),
+                        tint = TextSecondary
+                    )
                 }
-                Spacer(modifier = Modifier.height(40.dp))
+            }
+
+            // Edit icon button (top-end)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .border(1.dp, Color(0xFFDDE0E8), RoundedCornerShape(10.dp))
+                    .background(White)
+                    .clickable { /* future: open edit */ },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = "Edit profile",
+                    modifier = Modifier.size(18.dp),
+                    tint = TextPrimary
+                )
             }
         }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Name
+        Text(
+            text = "Mohamed",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF255E82),
+            modifier = Modifier.padding(horizontal = 24.dp)
+        )
+        Text(
+            text = "Ibrahim",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF255E82),
+            modifier = Modifier.padding(horizontal = 24.dp)
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "Joined 5 weeks ago",
+            fontSize = 13.sp,
+            color = TextSecondary,
+            modifier = Modifier.padding(horizontal = 24.dp)
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // ── Menu items ────────────────────────────────────────────────────────
+        ProfileMenuItem(icon = Icons.Default.LocationOn, label = "Saved Locations", onClick = {})
+        ProfileMenuItem(icon = Icons.Default.GridView,   label = "Recent Places",   onClick = {})
+        ProfileMenuItem(icon = Icons.Default.Email,      label = "Messages",        onClick = {})
+        ProfileMenuItem(icon = Icons.Default.Delete,     label = "Delete Account",  onClick = {})
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // ── Sign out button ───────────────────────────────────────────────────
+        OutlinedButton(
+            onClick = onLogoutClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .height(56.dp),
+            shape = RoundedCornerShape(16.dp),
+            border = ButtonDefaults.outlinedButtonBorder.copy(width = 1.5.dp),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = ProfileTeal,
+                containerColor = White
+            )
+        ) {
+            Text(
+                text = "Sign out",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = ProfileTeal
+            )
+        }
+
+        Spacer(modifier = Modifier.height(40.dp))
     }
 }
 
+// ── Single menu row ───────────────────────────────────────────────────────────
 @Composable
-private fun ProfileSection() {
+private fun ProfileMenuItem(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(24.dp)
-            .background(White, RoundedCornerShape(24.dp))
-            .padding(20.dp),
+            .padding(horizontal = 24.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(White)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(64.dp)
-                .background(Teal.copy(alpha = 0.1f), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Default.AccountCircle, contentDescription = null, size(40.dp), tint = Teal)
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            modifier = Modifier.size(22.dp),
+            tint = ProfileTeal
+        )
         Spacer(modifier = Modifier.width(16.dp))
-        Column {
-            Text("Ebrahim Ahmed", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = TextPrimary)
-            Text("+20 1012345678", color = TextSecondary, fontSize = 14.sp)
-        }
-    }
-}
-
-private fun size(dp: androidx.compose.ui.unit.Dp): Modifier = Modifier.size(dp)
-
-@Composable
-private fun SectionHeader(title: String) {
-    Text(
-        text = title,
-        modifier = Modifier.padding(start = 24.dp, top = 24.dp, bottom = 12.dp),
-        color = Teal,
-        fontWeight = FontWeight.Bold,
-        fontSize = 14.sp
-    )
-}
-
-@Composable
-private fun SettingsItem(icon: ImageVector, title: String, subtitle: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 4.dp)
-            .background(White, RoundedCornerShape(16.dp))
-            .clickable { /* Handle click */ }
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .background(Teal.copy(alpha = 0.05f), RoundedCornerShape(12.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = Teal)
-        }
-        Spacer(modifier = Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = TextPrimary)
-            Text(subtitle, fontSize = 12.sp, color = TextSecondary)
-        }
-        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = TextSecondary.copy(alpha = 0.5f))
+        Text(
+            text = label,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            color = TextPrimary,
+            modifier = Modifier.weight(1f)
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = TextSecondary
+        )
     }
 }

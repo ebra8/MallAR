@@ -41,7 +41,7 @@ private val EndRed = Color(0xFFE53935)
 fun StaticMapScreen(onBackClick: () -> Unit) {
     val context = LocalContext.current
     val mapBitmap = remember {
-        context.assets.open("map.png").use {
+        context.assets.open("map2.png").use {
             BitmapFactory.decodeStream(it).asImageBitmap()
         }
     }
