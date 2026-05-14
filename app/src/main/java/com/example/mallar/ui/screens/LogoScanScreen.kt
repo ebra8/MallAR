@@ -115,6 +115,8 @@ enum class ScreenFlow {
 
 @Composable
 fun LogoScanScreen(
+    preselectedDestination: Boolean = false,
+    onBackFromLogo: (() -> Unit)? = null,
     onSettingsClick: () -> Unit,
     onStoreSelected: (Boolean) -> Unit
 ) {
@@ -122,24 +124,27 @@ fun LogoScanScreen(
     var backPressedTime by remember { mutableLongStateOf(0L) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    var allPlaces    by remember { mutableStateOf<List<Place>>(emptyList()) }
-    var mallGraph    by remember { mutableStateOf<com.example.mallar.data.MallGraph?>(null) }
-    var logoDetector by remember { mutableStateOf<LogoDetector?>(null) }
-    var isLoading    by remember { mutableStateOf(true) }
+    var allPlaces         by remember { mutableStateOf<List<Place>>(emptyList()) }
+    var mallGraph         by remember { mutableStateOf<com.example.mallar.data.MallGraph?>(null) }
+    var logoDetector      by remember { mutableStateOf<LogoDetector?>(null) }
+    var isMallDataLoading by remember { mutableStateOf(true) }
 
     val scanRequested   = remember { AtomicBoolean(false) }
     val analysisAllowed = remember { AtomicBoolean(false) }
 
+    // Mall graph + places first (fast), then TFLite logo model on a worker thread so UI can appear sooner.
     LaunchedEffect(Unit) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val loadedPlaces   = PlaceRepository.load(context)
-            val loadedGraph    = MallGraphRepository.load(context)
+            val loadedPlaces = PlaceRepository.load(context)
+            val loadedGraph  = MallGraphRepository.load(context)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                allPlaces = loadedPlaces
+                mallGraph = loadedGraph
+                isMallDataLoading = false
+            }
             val loadedDetector = LogoDetector(context)
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                allPlaces    = loadedPlaces
-                mallGraph    = loadedGraph
                 logoDetector = loadedDetector
-                isLoading    = false
             }
         }
     }
@@ -155,6 +160,14 @@ fun LogoScanScreen(
     var chatPath           by remember { mutableStateOf<AStarPath?>(null) }
     var localizationResult by remember { mutableStateOf<LocalizationResult?>(null) }
     val latestBitmap       = remember { AtomicReference<Bitmap?>(null) }
+
+    // Keep local destination in sync when Home sends a new selection (NavigationState is not Compose state).
+    SideEffect {
+        if (preselectedDestination) {
+            val p = NavigationState.selectedPlace
+            if (p != null && destination?.id != p.id) destination = p
+        }
+    }
 
     // ── Voice Assistant ───────────────────────────────────────────────────────
     var showVoiceAssistant by remember { mutableStateOf(false) }
@@ -234,7 +247,15 @@ fun LogoScanScreen(
 
     BackHandler {
         when (flow) {
-            ScreenFlow.DESTINATION_DETAIL -> { flow = ScreenFlow.PICK_DESTINATION; destination = null }
+            ScreenFlow.DESTINATION_DETAIL -> {
+                if (preselectedDestination) {
+                    flow = ScreenFlow.CAMERA_IDLE
+                    destination = NavigationState.selectedPlace
+                } else {
+                    flow = ScreenFlow.PICK_DESTINATION
+                    destination = null
+                }
+            }
             ScreenFlow.PICK_DESTINATION   -> {
                 searchQuery = ""
                 flow = if (startPlace != null) ScreenFlow.SCAN_CONFIRM else ScreenFlow.CAMERA_IDLE
@@ -246,12 +267,17 @@ fun LogoScanScreen(
                 flow = ScreenFlow.CAMERA_IDLE; scanState = ScanState.IDLE; detectedBrand = null
             }
             ScreenFlow.CAMERA_IDLE -> {
-                val currentTime = System.currentTimeMillis()
-                if (currentTime - backPressedTime < 2000) {
-                    (context as? android.app.Activity)?.finish()
+                val handler = onBackFromLogo
+                if (handler != null) {
+                    handler()
                 } else {
-                    backPressedTime = currentTime
-                    Toast.makeText(context, "Press back again to exit", Toast.LENGTH_SHORT).show()
+                    val currentTime = System.currentTimeMillis()
+                    if (currentTime - backPressedTime < 2000) {
+                        (context as? android.app.Activity)?.finish()
+                    } else {
+                        backPressedTime = currentTime
+                        Toast.makeText(context, "Press back again to exit", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
             else -> { flow = ScreenFlow.CAMERA_IDLE }
@@ -374,7 +400,7 @@ fun LogoScanScreen(
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFFF5F7FA))) {
 
         // CAMERA PREVIEW
         AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
@@ -384,7 +410,7 @@ fun LogoScanScreen(
         }
 
         // ── Loading ───────────────────────────────────────────────────────────
-        AnimatedVisibility(visible = isLoading, modifier = Modifier.align(Alignment.Center),
+        AnimatedVisibility(visible = isMallDataLoading, modifier = Modifier.align(Alignment.Center),
             enter = fadeIn(), exit = fadeOut()) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(color = Teal, modifier = Modifier.size(48.dp), strokeWidth = 3.dp)
@@ -393,6 +419,24 @@ fun LogoScanScreen(
                     Text("Initialising mall map…", color = White, fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
+                }
+            }
+        }
+
+        val scannerReady = !isMallDataLoading && logoDetector != null
+        AnimatedVisibility(
+            visible = !isMallDataLoading && logoDetector == null,
+            modifier = Modifier.align(Alignment.Center),
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Teal, modifier = Modifier.size(40.dp), strokeWidth = 3.dp)
+                Spacer(Modifier.height(10.dp))
+                Surface(shape = RoundedCornerShape(20.dp), color = Color.Black.copy(0.65f)) {
+                    Text("Loading logo scanner…", color = White, fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp))
                 }
             }
         }
@@ -459,7 +503,13 @@ fun LogoScanScreen(
                     startPlace = chosenPlace
                     NavigationState.startPlace = chosenPlace
                     NavigationState.estimatedHeadingDeg = locResult.estimatedHeadingDeg
-                    flow = ScreenFlow.PICK_DESTINATION
+                    val dest = NavigationState.selectedPlace
+                    if (preselectedDestination && dest != null) {
+                        destination = dest
+                        flow = ScreenFlow.DESTINATION_DETAIL
+                    } else {
+                        flow = ScreenFlow.PICK_DESTINATION
+                    }
                     scanState = ScanState.IDLE
                     localizationResult = null
                 },
@@ -508,7 +558,14 @@ fun LogoScanScreen(
                                 val start = detectedPlace
                                 if (start != null) {
                                     startPlace = start; NavigationState.startPlace = start
-                                    flow = ScreenFlow.PICK_DESTINATION; scanState = ScanState.IDLE; detectedBrand = null
+                                    val dest = NavigationState.selectedPlace
+                                    if (preselectedDestination && dest != null) {
+                                        destination = dest
+                                        flow = ScreenFlow.DESTINATION_DETAIL
+                                    } else {
+                                        flow = ScreenFlow.PICK_DESTINATION
+                                    }
+                                    scanState = ScanState.IDLE; detectedBrand = null
                                 } else {
                                     flow = ScreenFlow.CAMERA_IDLE; scanState = ScanState.IDLE; detectedBrand = null
                                 }
@@ -540,7 +597,7 @@ fun LogoScanScreen(
         // ══════════════════════════════════════════════════════════════════════
         // PICK_DESTINATION
         // ══════════════════════════════════════════════════════════════════════
-        AnimatedVisibility(visible = flow == ScreenFlow.PICK_DESTINATION,
+        AnimatedVisibility(visible = flow == ScreenFlow.PICK_DESTINATION && !preselectedDestination,
             enter = fadeIn(tween(200)) + slideInVertically(tween(250)) { it / 10 },
             exit  = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it / 10 }) {
             Column(Modifier.fillMaxSize().background(White)) {
@@ -611,11 +668,19 @@ fun LogoScanScreen(
             exit  = fadeOut(tween(150))) {
             val dest = destination
             if (dest != null) {
-                Box(Modifier.fillMaxSize().background(Color.Black.copy(0.7f))) {
+                Box(Modifier.fillMaxSize().background(Color(0xFFF5F7FA))) {
                     Row(Modifier.fillMaxWidth().statusBarsPadding()
                         .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Surface(onClick = { flow = ScreenFlow.PICK_DESTINATION; destination = null },
+                        Surface(onClick = {
+                                if (preselectedDestination) {
+                                    flow = ScreenFlow.CAMERA_IDLE
+                                    destination = NavigationState.selectedPlace
+                                } else {
+                                    flow = ScreenFlow.PICK_DESTINATION
+                                    destination = null
+                                }
+                            },
                             modifier = Modifier.size(42.dp), shape = CircleShape, color = White.copy(0.9f)) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary)
@@ -655,7 +720,15 @@ fun LogoScanScreen(
                                         Text("${destMins}min", color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
-                                Surface(onClick = { flow = ScreenFlow.PICK_DESTINATION; destination = null },
+                                Surface(onClick = {
+                                    if (preselectedDestination) {
+                                        flow = ScreenFlow.CAMERA_IDLE
+                                        destination = NavigationState.selectedPlace
+                                    } else {
+                                        flow = ScreenFlow.PICK_DESTINATION
+                                        destination = null
+                                    }
+                                },
                                     modifier = Modifier.size(32.dp), shape = CircleShape, color = SurfaceLight) {
                                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                         Icon(Icons.Filled.Close, null, tint = TextSecondary, modifier = Modifier.size(14.dp))
@@ -690,7 +763,7 @@ fun LogoScanScreen(
                                     onClick = { startNavigation(mallGraph, startPlace, destination, destDistM, onStoreSelected, useAr = false) },
                                     modifier = Modifier.weight(1f).height(54.dp),
                                     shape = RoundedCornerShape(27.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF455A64))
                                 ) {
                                     Icon(Icons.Filled.Map, null, tint = White, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(8.dp))
@@ -720,18 +793,29 @@ fun LogoScanScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically) {
                 // Settings button
-                Box(Modifier.size(48.dp).clip(CircleShape).background(Color(0xFF1A1A2E))
-                    .clickable { onSettingsClick() }, Alignment.Center) {
-                    Icon(Icons.Default.Settings, "Settings", tint = Color(0xFF00BCD4),
-                        modifier = Modifier.size(22.dp))
+                Box(
+                    Modifier.size(48.dp).clip(CircleShape)
+                        .background(White)
+                        .shadow(4.dp, CircleShape)
+                        .clickable { onSettingsClick() },
+                    Alignment.Center
+                ) {
+                    Icon(Icons.Default.Settings, "Settings", tint = Teal, modifier = Modifier.size(22.dp))
                 }
                 // Voice Assistant pill
-                Row(Modifier.clip(RoundedCornerShape(24.dp)).background(Color(0xFF1A1A2E))
-                    .clickable { }.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Mic, null, tint = Color(0xFF00BCD4), modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Voice Assistant", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = White,
+                    shadowElevation = 4.dp
+                ) {
+                    Row(
+                        Modifier.clickable { }.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Mic, null, tint = Teal, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Voice Assistant", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         }
@@ -757,14 +841,25 @@ fun LogoScanScreen(
                     drawCircle(col, radius = s * 0.06f, center = c)
                 }
                 Spacer(Modifier.height(20.dp))
-                Text(
-                    buildAnnotatedString {
-                        withStyle(SpanStyle(color = Color.White, fontSize = 22.sp)) { append("Point your camera\nat a ") }
-                        withStyle(SpanStyle(color = Color(0xFF00BCD4), fontSize = 22.sp)) { append("store logo") }
-                        withStyle(SpanStyle(color = Color.White, fontSize = 22.sp)) { append("\nto start navigation") }
-                    },
-                    textAlign = TextAlign.Center
-                )
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = White.copy(alpha = 0.88f),
+                    shadowElevation = 2.dp
+                ) {
+                    Text(
+                        buildAnnotatedString {
+                            withStyle(SpanStyle(color = TextPrimary, fontSize = 18.sp)) { append("Point your camera at a ") }
+                            withStyle(SpanStyle(color = Teal, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)) { append("store logo") }
+                            if (preselectedDestination) {
+                                withStyle(SpanStyle(color = TextSecondary, fontSize = 16.sp)) { append("\nto confirm where you are") }
+                            } else {
+                                withStyle(SpanStyle(color = TextSecondary, fontSize = 16.sp)) { append("\nto start navigation") }
+                            }
+                        },
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+                    )
+                }
             }
         }
 
@@ -776,37 +871,68 @@ fun LogoScanScreen(
                 .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
-                // Search bar
-                Surface(Modifier.fillMaxWidth().height(54.dp).shadow(8.dp, RoundedCornerShape(27.dp))
-                    .clickable { startPlace = NavigationState.startPlace; searchQuery = ""; flow = ScreenFlow.PICK_DESTINATION },
-                    RoundedCornerShape(27.dp), color = Color(0xFF1A1A2E)) {
-                    Row(Modifier.fillMaxSize().padding(horizontal = 18.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Search, null, tint = Color.White.copy(0.5f), modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Text("Where to go...", color = Color.White.copy(0.4f), fontSize = 15.sp, modifier = Modifier.weight(1f))
-                        Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0xFF00BCD4)),
-                            Alignment.Center) {
-                            Icon(Icons.Default.Settings, null, tint = Color.White, modifier = Modifier.size(17.dp))
+                // Destination summary (Home already chose) — no second destination search here.
+                if (preselectedDestination && NavigationState.selectedPlace != null) {
+                    val destPlace = NavigationState.selectedPlace!!
+                    Surface(
+                        Modifier.fillMaxWidth().height(54.dp).shadow(8.dp, RoundedCornerShape(27.dp)),
+                        RoundedCornerShape(27.dp),
+                        color = White
+                    ) {
+                        Row(
+                            Modifier.fillMaxSize().padding(horizontal = 18.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.LocationOn, null, tint = Teal, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Going to", color = TextSecondary, fontSize = 11.sp)
+                                Text(destPlace.brand, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                } else {
+                    Surface(
+                        Modifier.fillMaxWidth().height(54.dp).shadow(8.dp, RoundedCornerShape(27.dp))
+                            .clickable { startPlace = NavigationState.startPlace; searchQuery = ""; flow = ScreenFlow.PICK_DESTINATION },
+                        RoundedCornerShape(27.dp),
+                        color = White
+                    ) {
+                        Row(Modifier.fillMaxSize().padding(horizontal = 18.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Search, null, tint = TextSecondary.copy(0.5f), modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text("Where to go...", color = TextSecondary.copy(0.5f), fontSize = 15.sp, modifier = Modifier.weight(1f))
+                            Box(Modifier.size(34.dp).clip(CircleShape).background(Teal),
+                                Alignment.Center) {
+                                Icon(Icons.Default.Settings, null, tint = White, modifier = Modifier.size(17.dp))
+                            }
                         }
                     }
                 }
 
                 // 3 buttons panel
-                Surface(Modifier.fillMaxWidth(), RoundedCornerShape(24.dp), color = Color(0xFF111827)) {
+                Surface(
+                    Modifier.fillMaxWidth().shadow(6.dp, RoundedCornerShape(24.dp)),
+                    RoundedCornerShape(24.dp),
+                    color = White
+                ) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 12.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically) {
 
                         // Ask Me (chat)
-                        Column(Modifier.weight(1f).clip(RoundedCornerShape(16.dp))
-                            .background(Color(0xFF1E293B)).clickable { showChatBot = true }
-                            .padding(vertical = 14.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.SmartToy, null, tint = Color(0xFF00BCD4), modifier = Modifier.size(28.dp))
+                        Column(
+                            Modifier.weight(1f).clip(RoundedCornerShape(16.dp))
+                                .background(Color(0xFFF1F5F9))
+                                .clickable { showChatBot = true }
+                                .padding(vertical = 14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.Default.SmartToy, null, tint = Teal, modifier = Modifier.size(28.dp))
                             Spacer(Modifier.height(6.dp))
-                            Text("Ask Me", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Text("Get help", color = Color.White.copy(0.45f), fontSize = 11.sp)
+                            Text("Ask Me", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Get help", color = TextSecondary, fontSize = 11.sp)
                         }
 
                         Spacer(Modifier.width(8.dp))
@@ -815,9 +941,9 @@ fun LogoScanScreen(
                         Column(Modifier.weight(1.3f),
                             horizontalAlignment = Alignment.CenterHorizontally) {
                             Box(Modifier.size(76.dp).clip(CircleShape)
-                                .background(Brush.radialGradient(listOf(Color(0xFF00ACC1), Color(0xFF00838F))))
+                                .background(Brush.radialGradient(listOf(Teal, DarkTeal)))
                                 .clickable {
-                                    if (scanState != ScanState.SCANNING && !isLoading) {
+                                    if (scanState != ScanState.SCANNING && scannerReady) {
                                         scanState = ScanState.SCANNING
                                         detectedBrand = null
                                         scanRequested.set(true)
@@ -838,34 +964,38 @@ fun LogoScanScreen(
                                 }
                             }
                             Spacer(Modifier.height(6.dp))
-                            Text(if (isLoading) "Loading…" else "Scan Logo",
-                                color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                when {
+                                    isMallDataLoading    -> "Loading map…"
+                                    logoDetector == null -> "Loading scanner…"
+                                    else                 -> "Scan Logo"
+                                },
+                                color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold
+                            )
                         }
 
                         Spacer(Modifier.width(8.dp))
 
                         // Voice Assistant
-                        Column(Modifier.weight(1f).clip(RoundedCornerShape(16.dp))
-                            .background(
-                                if (voiceUiState.status != com.example.mallar.voice.VoiceAssistantStatus.IDLE)
-                                    Color(0xFF003B47)
-                                else Color(0xFF1E293B)
-                            )
-                            .clickable { showVoiceAssistant = true }
-                            .padding(vertical = 14.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally) {
+                        val voiceActive = voiceUiState.status != VoiceAssistantStatus.IDLE
+                        Column(
+                            Modifier.weight(1f).clip(RoundedCornerShape(16.dp))
+                                .background(if (voiceActive) Teal.copy(0.12f) else Color(0xFFF1F5F9))
+                                .clickable { showVoiceAssistant = true }
+                                .padding(vertical = 14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
                             Icon(
-                                imageVector = if (voiceUiState.status == com.example.mallar.voice.VoiceAssistantStatus.LISTENING)
+                                imageVector = if (voiceUiState.status == VoiceAssistantStatus.LISTENING)
                                     Icons.Default.MicOff else Icons.Default.Mic,
                                 contentDescription = null,
-                                tint = if (voiceUiState.status != com.example.mallar.voice.VoiceAssistantStatus.IDLE)
-                                    Color(0xFFFFFFFF) else Color(0xFF00BCD4),
+                                tint = if (voiceActive) Teal else Teal,
                                 modifier = Modifier.size(28.dp)
                             )
                             Spacer(Modifier.height(6.dp))
-                            Text("Voice", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Text("Assistant", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                            Text("Speak & Navigate", color = Color.White.copy(0.45f), fontSize = 10.sp)
+                            Text("Voice", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Assistant", color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Speak & Navigate", color = TextSecondary, fontSize = 10.sp)
                         }
                     }
                 }

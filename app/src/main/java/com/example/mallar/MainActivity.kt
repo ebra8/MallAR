@@ -21,17 +21,10 @@ import com.example.mallar.ui.theme.MallARTheme
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
-
         super.onCreate(savedInstanceState)
-
         setContent {
-
             MallARTheme {
-
-                Surface(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-
+                Surface(modifier = Modifier.fillMaxSize()) {
                     MallARNavGraph(this)
                 }
             }
@@ -44,346 +37,232 @@ fun MallARNavGraph(context: Context) {
 
     val navController = rememberNavController()
 
-    val prefs: SharedPreferences =
-        remember {
-            context.getSharedPreferences(
-                "mallar_prefs",
-                Context.MODE_PRIVATE
-            )
-        }
+    val prefs: SharedPreferences = remember {
+        context.getSharedPreferences("mallar_prefs", Context.MODE_PRIVATE)
+    }
 
     val isFirstLaunch = remember {
-        mutableStateOf(
-            prefs.getBoolean(
-                "is_first_launch",
-                true
-            )
-        )
+        mutableStateOf(prefs.getBoolean("is_first_launch", true))
     }
 
-    // IMPORTANT
-    var verificationId by remember {
-        mutableStateOf("")
-    }
+    var verificationId by remember { mutableStateOf("") }
 
     fun checkPermissionsGranted(): Boolean {
-
-        val cameraPermission =
-            ContextCompat.checkSelfPermission(
-                context,
-                android.Manifest.permission.CAMERA
-            )
-
-        return cameraPermission ==
-                PackageManager.PERMISSION_GRANTED
+        return ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
     NavHost(
-        navController = navController,
+        navController    = navController,
         startDestination = "splash"
     ) {
 
-        // Splash
+        // ── Splash ────────────────────────────────────────────────────────────
         composable("splash") {
-
             SplashScreen(
-
                 isFirstLaunch = isFirstLaunch.value,
-
-                onStartClick = {
-
+                onStartClick  = {
                     if (isFirstLaunch.value) {
-
                         navController.navigate("welcome") {
-
-                            popUpTo("splash") {
-                                inclusive = true
-                            }
+                            popUpTo("splash") { inclusive = true }
                         }
-
                     } else {
-
-                        if (checkPermissionsGranted()) {
-
-                            navController.navigate("logo_scan") {
-
-                                popUpTo("splash") {
-                                    inclusive = true
-                                }
-                            }
-
-                        } else {
-
-                            navController.navigate("permissions") {
-
-                                popUpTo("splash") {
-                                    inclusive = true
-                                }
-                            }
+                        // Returning user → go straight to Home
+                        navController.navigate("home") {
+                            popUpTo("splash") { inclusive = true }
                         }
                     }
                 }
             )
         }
 
-        // Welcome
+        // ── Welcome (first-time / sign-in) ────────────────────────────────────
         composable("welcome") {
-
             WelcomeScreen(
-
                 onPhoneAuthClick = {
-
                     navController.navigate("phone_auth")
                 },
-
                 onSkipClick = {
-
                     isFirstLaunch.value = false
-
-                    prefs.edit()
-                        .putBoolean(
-                            "is_first_launch",
-                            false
-                        )
-                        .apply()
-
-                    if (checkPermissionsGranted()) {
-
-                        navController.navigate("logo_scan") {
-
-                            popUpTo("welcome") {
-                                inclusive = true
-                            }
-                        }
-
-                    } else {
-
-                        navController.navigate("permissions") {
-
-                            popUpTo("welcome") {
-                                inclusive = true
-                            }
-                        }
+                    prefs.edit().putBoolean("is_first_launch", false).apply()
+                    navController.navigate("home") {
+                        popUpTo("welcome") { inclusive = true }
                     }
                 }
             )
         }
 
-        // Phone Auth
+        // ── Phone Auth ────────────────────────────────────────────────────────
         composable("phone_auth") {
-
             PhoneAuthScreen(
-
-                onBackClick = {
-
-                    navController.popBackStack()
-                },
-
-                onCodeSent = { id: String ->
-
+                onBackClick  = { navController.popBackStack() },
+                onCodeSent   = { id: String ->
                     verificationId = id
-
                     navController.navigate("otp_verify")
                 },
-
-                onSkipClick = {
-
+                onSkipClick  = {
                     isFirstLaunch.value = false
-
-                    prefs.edit()
-                        .putBoolean(
-                            "is_first_launch",
-                            false
-                        )
-                        .apply()
-
-                    if (checkPermissionsGranted()) {
-
-                        navController.navigate("logo_scan") {
-
-                            popUpTo("phone_auth") {
-                                inclusive = true
-                            }
-                        }
-
-                    } else {
-
-                        navController.navigate("permissions") {
-
-                            popUpTo("phone_auth") {
-                                inclusive = true
-                            }
-                        }
+                    prefs.edit().putBoolean("is_first_launch", false).apply()
+                    navController.navigate("home") {
+                        popUpTo("phone_auth") { inclusive = true }
                     }
                 }
             )
         }
 
-        // OTP Verify
+        // ── OTP Verify ────────────────────────────────────────────────────────
         composable("otp_verify") {
-
             OtpVerifyScreen(
-
                 verificationId = verificationId,
-
-                onBackClick = {
-
-                    navController.popBackStack()
-                },
-
-                onSuccess = {
-
+                onBackClick    = { navController.popBackStack() },
+                onSuccess      = {
                     isFirstLaunch.value = false
-
-                    prefs.edit()
-                        .putBoolean(
-                            "is_first_launch",
-                            false
-                        )
-                        .apply()
-
-                    if (checkPermissionsGranted()) {
-
-                        navController.navigate("logo_scan") {
-
-                            popUpTo("welcome") {
-                                inclusive = true
-                            }
-                        }
-
-                    } else {
-
-                        navController.navigate("permissions") {
-
-                            popUpTo("welcome") {
-                                inclusive = true
-                            }
-                        }
+                    prefs.edit().putBoolean("is_first_launch", false).apply()
+                    navController.navigate("home") {
+                        popUpTo(0) { inclusive = true }
                     }
                 }
             )
         }
 
-        // Permissions
+        // ── Permissions ───────────────────────────────────────────────────────
         composable("permissions") {
-
             PermissionsScreen(
-
                 onContinueClick = {
-
-                    navController.navigate("logo_scan") {
-
-                        popUpTo("permissions") {
-                            inclusive = true
-                        }
+                    val target =
+                        if (NavigationState.selectedPlace != null) "logo_scan_with_dest" else "logo_scan"
+                    navController.navigate(target) {
+                        popUpTo("permissions") { inclusive = true }
                     }
                 }
             )
         }
 
-        // Logo Scan
-        composable("logo_scan") {
+        // ── HOME ──────────────────────────────────────────────────────────────
+        // NEW: First screen after auth. User picks a destination here.
+        // After selection → check permissions → logo_scan (to localize) → navigation
+        composable("home") {
+            HomeScreen(
+                onMapClick = {
+                    navController.navigate("static_map")
+                },
+                onDestinationSelected = { place ->
+                    // Save the chosen destination globally
+                    NavigationState.selectedPlace = place
 
-            LogoScanScreen(
-
+                    // Now send user to logo scan to set their start location,
+                    // with the destination already known.
+                    if (checkPermissionsGranted()) {
+                        navController.navigate("logo_scan_with_dest")
+                    } else {
+                        navController.navigate("permissions")
+                    }
+                },
                 onSettingsClick = {
-
                     navController.navigate("settings")
                 },
+                onVoiceClick = {
+                    val target =
+                        if (NavigationState.selectedPlace != null) "logo_scan_with_dest" else "logo_scan"
+                    if (checkPermissionsGranted()) {
+                        navController.navigate(target)
+                    } else {
+                        navController.navigate("permissions")
+                    }
+                }
+            )
+        }
 
+        // ── Logo Scan (destination pre-selected from HomeScreen) ──────────────
+        // User has already chosen where they want to go.
+        // This screen is now only for LOCALIZATION (setting start position).
+        // Once localized it auto-navigates.
+        composable("logo_scan_with_dest") {
+            LogoScanScreen(
+                preselectedDestination = true,
+                onBackFromLogo = { navController.popBackStack() },
+                onSettingsClick  = {
+                    navController.navigate("settings")
+                },
+                onStoreSelected  = { isCameraMode ->
+                    NavigationState.startWithAr = isCameraMode
+                    navController.navigate("navigation") {
+                        // Keep home in the back stack so back from navigation → home
+                        popUpTo("home") { inclusive = false }
+                    }
+                }
+            )
+        }
+
+        // ── Logo Scan (standalone — no destination pre-selected) ──────────────
+        // Kept for backwards compatibility / direct deep links
+        composable("logo_scan") {
+            LogoScanScreen(
+                onBackFromLogo = { navController.popBackStack() },
+                onSettingsClick = {
+                    navController.navigate("settings")
+                },
                 onStoreSelected = { isCameraMode ->
-
-                    NavigationState.startWithAr =
-                        isCameraMode
-
+                    NavigationState.startWithAr = isCameraMode
                     navController.navigate("navigation")
                 }
             )
         }
 
-        // Settings
+        // ── Static mall map (from Home bottom nav) ────────────────────────────
+        composable("static_map") {
+            StaticMapScreen(
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+
+        // ── Settings ──────────────────────────────────────────────────────────
         composable("settings") {
-
             SettingsScreen(
-
-                onBackClick = {
-
-                    navController.popBackStack()
-                },
-
+                onBackClick   = { navController.popBackStack() },
                 onLogoutClick = {
-
+                    isFirstLaunch.value = true
+                    prefs.edit().putBoolean("is_first_launch", true).apply()
                     navController.navigate("welcome") {
-
-                        popUpTo(0) {
-                            inclusive = true
-                        }
+                        popUpTo(0) { inclusive = true }
                     }
                 }
             )
         }
 
-        // Store Search
+        // ── Store Search ──────────────────────────────────────────────────────
         composable("store_search") {
-
             StoreSearchScreen(
-
                 onStoreClick = { place ->
-
-                    NavigationState.selectedPlace =
-                        place
-
+                    NavigationState.selectedPlace = place
                     navController.navigate("store_detail")
                 },
-
-                onBackClick = {
-
-                    navController.popBackStack()
-                }
+                onBackClick  = { navController.popBackStack() }
             )
         }
 
-        // Store Detail
+        // ── Store Detail ──────────────────────────────────────────────────────
         composable("store_detail") {
-
-            val place =
-                NavigationState.selectedPlace
-
+            val place = NavigationState.selectedPlace
             if (place != null) {
-
                 StoreDetailScreen(
-
-                    place = place,
-
-                    onBackClick = {
-
-                        navController.popBackStack()
-                    },
-
+                    place           = place,
+                    onBackClick     = { navController.popBackStack() },
                     onStartNavigation = { isCameraMode ->
-
-                        NavigationState.startWithAr =
-                            isCameraMode
-
+                        NavigationState.startWithAr = isCameraMode
                         navController.navigate("navigation")
                     }
                 )
-
             } else {
-
                 navController.popBackStack()
             }
         }
 
-        // Navigation
+        // ── Navigation ────────────────────────────────────────────────────────
         composable("navigation") {
-
             UnifiedNavigationScreen(
-
-                onBackClick = {
-
-                    navController.popBackStack()
-                }
+                onBackClick = { navController.popBackStack() }
             )
         }
     }
