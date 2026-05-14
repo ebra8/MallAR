@@ -51,27 +51,41 @@ object MallGraphRepository {
     private var graph: MallGraph? = null
     var loadedGraph: MallGraph? = null  // public read-only access without context
 
+    // ── FIX: HashMap caches built once on first load — O(1) node lookups ─────
+    private var nodeMapCache:     Map<Int, GraphNode>? = null
+    private var shopIdMapCache:   Map<Int, GraphNode>? = null
+
     fun load(context: Context): MallGraph {
         graph?.let { return it }
-        val json = context.assets.open("mall_graph.json").bufferedReader().use { it.readText() }
+        val json   = context.assets.open("mall_graph.json").bufferedReader().use { it.readText() }
         val loaded = Gson().fromJson(json, MallGraph::class.java)
-        graph = loaded
+        graph      = loaded
         loadedGraph = loaded
+        // Build lookup caches immediately — O(n) once, then O(1) forever
+        nodeMapCache   = loaded.nodes.associateBy { it.id }
+        shopIdMapCache = loaded.nodes.filter { it.shopId != null }.associateBy { it.shopId!! }
         // Validate on load
         validateGraph(loaded)
         return loaded
     }
 
-    fun nodeForShop(graph: MallGraph, shopId: Int): GraphNode? =
-        graph.nodes.firstOrNull { it.shopId == shopId }
+    // ── FIX: All lookup functions use the HashMap cache — no linear scan ──────
 
-    fun nodeById(graph: MallGraph, nodeId: Int): GraphNode? =
-        graph.nodes.firstOrNull { it.id == nodeId }
+    fun nodeForShop(graph: MallGraph, shopId: Int): GraphNode? {
+        // Use cache if built, otherwise fall back to linear (cache is always built after load())
+        return shopIdMapCache?.get(shopId)
+            ?: graph.nodes.firstOrNull { it.shopId == shopId }
+    }
+
+    fun nodeById(graph: MallGraph, nodeId: Int): GraphNode? {
+        return nodeMapCache?.get(nodeId)
+            ?: graph.nodes.firstOrNull { it.id == nodeId }
+    }
 
     /** Look up a GraphNode from the path's nodeIds list by sequential index */
     fun nodeAtPathIndex(graph: MallGraph, path: AStarPath, index: Int): GraphNode? {
         val nodeId = path.nodeIds.getOrNull(index) ?: return null
-        return graph.nodes.firstOrNull { it.id == nodeId }
+        return nodeById(graph, nodeId)
     }
 
     /**
@@ -100,7 +114,7 @@ object MallGraphRepository {
     // ── Graph validation ─────────────────────────────────────────────────────
 
     private fun validateGraph(graph: MallGraph) {
-        val nodeIds = graph.nodes.map { it.id }.toSet()
+        val nodeIds      = graph.nodes.map { it.id }.toSet()
         val connectedIds = mutableSetOf<Int>()
         var invalidEdges = 0
 
@@ -140,7 +154,8 @@ object MallGraphRepository {
     // ── Core A* with Euclidean edge weights ───────────────────────────────────
 
     private fun runAStar(graph: MallGraph, startId: Int, goalId: Int): AStarPath? {
-        val nodeMap = graph.nodes.associateBy { it.id }
+        // FIX: use the pre-built HashMap cache instead of building a new map every call
+        val nodeMap = nodeMapCache ?: graph.nodes.associateBy { it.id }
         val goal    = nodeMap[goalId] ?: return null
 
         // Build undirected adjacency with Euclidean pixel distances as weights
@@ -225,10 +240,10 @@ object MallGraphRepository {
 
         val TURN_THRESHOLD = 30.0  // degrees — 30° is correct for tight indoor corridors
 
-        val instructions = mutableListOf<NavInstruction>()
-        var currentDir  = AStarDirection.STRAIGHT
+        val instructions    = mutableListOf<NavInstruction>()
+        var currentDir      = AStarDirection.STRAIGHT
         var accumulatedDist = 0.0
-        var segNodeIndex = 0
+        var segNodeIndex    = 0
 
         for (i in 0 until path.size - 1) {
             val a = nodeMap[path[i]]!!
@@ -238,7 +253,7 @@ object MallGraphRepository {
             val dir: AStarDirection = if (i == 0) {
                 AStarDirection.STRAIGHT
             } else {
-                val prev = nodeMap[path[i - 1]]!!
+                val prev  = nodeMap[path[i - 1]]!!
                 val angle = angleChange(prev, a, b)
                 when {
                     angle > TURN_THRESHOLD  -> AStarDirection.RIGHT
@@ -248,8 +263,8 @@ object MallGraphRepository {
             }
 
             if (i == 0) {
-                currentDir = dir
-                segNodeIndex = 0
+                currentDir      = dir
+                segNodeIndex    = 0
                 accumulatedDist = segDist
             } else if (dir == AStarDirection.STRAIGHT && currentDir == AStarDirection.STRAIGHT) {
                 // Continue accumulating straight distance
@@ -258,8 +273,8 @@ object MallGraphRepository {
                 // Emit the previous segment
                 instructions.add(NavInstruction(currentDir, accumulatedDist, segNodeIndex))
                 // Start new segment
-                currentDir = dir
-                segNodeIndex = i
+                currentDir      = dir
+                segNodeIndex    = i
                 accumulatedDist = segDist
             }
         }

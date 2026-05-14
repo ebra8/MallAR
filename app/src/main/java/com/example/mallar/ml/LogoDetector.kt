@@ -39,11 +39,22 @@ class LogoDetector(private val context: Context) {
     // Each brand keeps ALL its embeddings (not averaged) — same as working app
     private val shopDatabase = mutableMapOf<String, List<FloatArray>>()
 
-    private var modelLoaded = false
+    private var modelLoaded    = false
     private var databaseLoaded = false
 
-    // ✅ Same threshold as working app
-    private val CONFIDENCE_THRESHOLD = 0.35f
+    // ── TASK 1: Strict confidence threshold (raised from 0.35 → 0.75) ─────────
+    // A higher threshold dramatically reduces false positives from random scenes.
+    private val CONFIDENCE_THRESHOLD = 0.75f
+
+    // ── TASK 2: Margin-based ambiguity rejection ───────────────────────────────
+    // If the top-2 brands are within MARGIN_THRESHOLD of each other the scene is
+    // ambiguous and we refuse to commit to either brand.
+    private val MARGIN_THRESHOLD = 0.08f
+
+    // ── TASK 3: Dark-image rejection ──────────────────────────────────────────
+    // Average per-pixel brightness (0–255) below this value → reject the frame.
+    private val DARK_IMAGE_THRESHOLD = 20
+
     // ✅ Same top-K as working app
     private val TOP_K_EMBEDDINGS = 3
 
@@ -63,7 +74,7 @@ class LogoDetector(private val context: Context) {
 
     private fun loadModel() {
         try {
-            tflite = Interpreter(loadModelFile(), Interpreter.Options())
+            tflite      = Interpreter(loadModelFile(), Interpreter.Options())
             modelLoaded = true
             val outShape = tflite.getOutputTensor(0).shape()
             Log.d(TAG, "✅ Model loaded — output size: ${outShape[1]}")
@@ -99,26 +110,95 @@ class LogoDetector(private val context: Context) {
         }
     }
 
+    // ── TASK 3: Dark-image validation ─────────────────────────────────────────
+
+    /**
+     * Returns true when the [bitmap] is too dark to contain useful visual
+     * information (e.g. a black frame from an uninitialized camera feed).
+     *
+     * Algorithm:
+     *  1. Sample every pixel of the bitmap.
+     *  2. Compute an approximate luminance as the simple average of the R, G, B
+     *     channels (fast, avoids pow/sqrt; sufficient for a binary dark/not-dark
+     *     decision).
+     *  3. Average across all pixels and compare to [DARK_IMAGE_THRESHOLD].
+     *
+     * Implementation notes:
+     *  • Uses a single IntArray pixel read — one allocation for the whole image.
+     *  • Long accumulator prevents overflow for large bitmaps.
+     *  • Scales with bitmap size; no sub-sampling bias on small thumbnails.
+     */
+    private fun isTooDark(bitmap: Bitmap): Boolean {
+        val w = bitmap.width
+        val h = bitmap.height
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        var brightnessSum = 0L
+        for (pixel in pixels) {
+            val r = (pixel shr 16) and 0xFF
+            val g = (pixel shr 8)  and 0xFF
+            val b =  pixel         and 0xFF
+            brightnessSum += (r + g + b) / 3   // grayscale-style average per pixel
+        }
+
+        val avgBrightness = (brightnessSum / pixels.size).toInt()
+        return avgBrightness < DARK_IMAGE_THRESHOLD
+    }
+
     // ── detection ─────────────────────────────────────────────────────────────
 
-    /** Returns the single best detection above [CONFIDENCE_THRESHOLD], or null. */
+    /**
+     * Returns the single best detection above [CONFIDENCE_THRESHOLD], or null.
+     *
+     * Rejection pipeline (all checks short-circuit on failure):
+     *  1. [TASK 3] Dark-image guard — rejects black / near-black frames.
+     *  2. [TASK 1] Confidence threshold — score must be ≥ 0.75.
+     *  3. [TASK 2] Margin guard — top brand must outscore #2 by ≥ 0.08.
+     */
     fun detect(bitmap: Bitmap): DetectionResult? {
         if (!modelLoaded)    { Log.w(TAG, "Model not ready");    return null }
         if (!databaseLoaded) { Log.w(TAG, "Database not ready"); return null }
 
+        // ── TASK 3: Reject dark frames before running inference ────────────────
+        if (isTooDark(bitmap)) {
+            Log.d(TAG, "🌑 Image rejected: too dark")
+            return null
+        }
+
         return try {
-            val inputBuffer  = preprocessImage(bitmap)
-            val queryVector  = extractEmbedding(inputBuffer)
+            val inputBuffer = preprocessImage(bitmap)
+            val queryVector = extractEmbedding(inputBuffer)
+            val scores      = compareWithDatabase(queryVector)
 
-            val scores = compareWithDatabase(queryVector)
-            val best   = scores.firstOrNull() ?: return null
+            val best = scores.getOrNull(0) ?: return null
 
-            Log.d(TAG, "🏆 Best: ${best.brand}  sim=${"%.4f".format(best.similarity)}  threshold=$CONFIDENCE_THRESHOLD")
+            // ── TASK 1: Confidence threshold ──────────────────────────────────
+            Log.d(TAG, "🏆 Best similarity: ${"%.4f".format(best.similarity)}")
+            Log.d(TAG, "📉 Threshold: $CONFIDENCE_THRESHOLD")
 
-            if (best.similarity > CONFIDENCE_THRESHOLD)
-                DetectionResult(best.brand, best.similarity)
-            else
-                null
+            if (best.similarity < CONFIDENCE_THRESHOLD) {
+                Log.d(TAG, "❌ Rejected")
+                return null
+            }
+            Log.d(TAG, "✅ Accepted")
+
+            // ── TASK 2: Margin-based ambiguity rejection ───────────────────────
+            val second = scores.getOrNull(1)
+            if (second != null) {
+                val margin = best.similarity - second.similarity
+                Log.d(TAG, "🥇 Best:   ${best.brand}   ${best.similarity}")
+                Log.d(TAG, "🥈 Second: ${second.brand} ${second.similarity}")
+                Log.d(TAG, "📏 Margin: ${"%.4f".format(margin)}")
+
+                if (margin < MARGIN_THRESHOLD) {
+                    Log.d(TAG, "❌ Ambiguous prediction rejected")
+                    return null
+                }
+            }
+
+            DetectionResult(best.brand, best.similarity)
+
         } catch (e: Exception) {
             Log.e(TAG, "❌ Detection error: ${e.message}")
             null
@@ -130,8 +210,12 @@ class LogoDetector(private val context: Context) {
      * sorted descending by score. Used by [com.example.mallar.ml.LocalizationEngine]
      * for multi-landmark pose estimation.
      *
-     * @param bitmap      Camera frame bitmap (any orientation — preprocessed internally).
-     * @param maxResults  Maximum number of results to return (default 5).
+     * NOTE: Margin-based ambiguity rejection is intentionally NOT applied here —
+     * callers of detectTopN need the full ranked list and can apply their own
+     * disambiguation logic. Only the confidence threshold is enforced.
+     *
+     * @param bitmap        Camera frame bitmap (any orientation — preprocessed internally).
+     * @param maxResults    Maximum number of results to return (default 5).
      * @param minSimilarity Minimum similarity cutoff (default = CONFIDENCE_THRESHOLD).
      */
     fun detectTopN(
@@ -142,11 +226,18 @@ class LogoDetector(private val context: Context) {
         if (!modelLoaded)    { Log.w(TAG, "Model not ready");    return emptyList() }
         if (!databaseLoaded) { Log.w(TAG, "Database not ready"); return emptyList() }
 
+        // ── TASK 3: Reject dark frames before running inference ────────────────
+        if (isTooDark(bitmap)) {
+            Log.d(TAG, "🌑 detectTopN — image rejected: too dark")
+            return emptyList()
+        }
+
         return try {
             val inputBuffer = preprocessImage(bitmap)
             val queryVector = extractEmbedding(inputBuffer)
             val scores      = compareWithDatabase(queryVector)
 
+            // ── TASK 1: Filter by strict confidence threshold ──────────────────
             scores
                 .filter  { it.similarity >= minSimilarity }
                 .take    (maxResults)
@@ -166,11 +257,11 @@ class LogoDetector(private val context: Context) {
 
     private fun preprocessImage(bitmap: Bitmap): ByteBuffer {
         // Crop the center of the image to be square
-        val minDim = Math.min(bitmap.width, bitmap.height)
-        val startX = (bitmap.width - minDim) / 2
-        val startY = (bitmap.height - minDim) / 2
+        val minDim  = Math.min(bitmap.width, bitmap.height)
+        val startX  = (bitmap.width  - minDim) / 2
+        val startY  = (bitmap.height - minDim) / 2
         val cropped = Bitmap.createBitmap(bitmap, startX, startY, minDim, minDim)
-        
+
         val resized = Bitmap.createScaledBitmap(cropped, IMG_SIZE, IMG_SIZE, true)
 
         // ✅ KEY FIX: normalize to [-1, 1] — same as working app
@@ -207,7 +298,7 @@ class LogoDetector(private val context: Context) {
         return shopDatabase.map { (brand, embeddings) ->
             // ✅ Compare against every stored embedding, take avg of top-3
             val similarities = embeddings.map { cosineSimilarity(query, it) }
-            val avgSim = similarities.sortedDescending().take(TOP_K_EMBEDDINGS).average().toFloat()
+            val avgSim       = similarities.sortedDescending().take(TOP_K_EMBEDDINGS).average().toFloat()
             DetectionResult(brand, avgSim)
         }.sortedByDescending { it.similarity }
     }
@@ -220,7 +311,7 @@ class LogoDetector(private val context: Context) {
             return 0f
         }
         var dot = 0f; var normA = 0f; var normB = 0f
-        for (i in a.indices) { dot += a[i]*b[i]; normA += a[i]*a[i]; normB += b[i]*b[i] }
+        for (i in a.indices) { dot += a[i] * b[i]; normA += a[i] * a[i]; normB += b[i] * b[i] }
         val denom = sqrt(normA) * sqrt(normB)
         return if (denom == 0f) 0f else dot / denom
     }
@@ -247,6 +338,12 @@ class LogoDetector(private val context: Context) {
     ): List<DetectionResult> {
         if (!modelLoaded || !databaseLoaded) return emptyList()
 
+        // ── TASK 3: Reject dark frames before running expensive grid inference ─
+        if (isTooDark(bitmap)) {
+            Log.d(TAG, "🌑 detectTopNWithLocation — image rejected: too dark")
+            return emptyList()
+        }
+
         data class CellResult(
             val cellRow: Int, val cellCol: Int,
             val scores: List<DetectionResult>   // full ranked list for this cell
@@ -265,9 +362,9 @@ class LogoDetector(private val context: Context) {
                 val h = cellH.toInt().coerceAtMost(bitmap.height - y)
                 if (w <= 0 || h <= 0) continue
 
-                val crop = Bitmap.createBitmap(bitmap, x, y, w, h)
-                val buf  = preprocessImage(crop)
-                val vec  = extractEmbedding(buf)
+                val crop   = Bitmap.createBitmap(bitmap, x, y, w, h)
+                val buf    = preprocessImage(crop)
+                val vec    = extractEmbedding(buf)
                 val scores = compareWithDatabase(vec)
                 cellResults += CellResult(row, col, scores)
             }
@@ -285,6 +382,7 @@ class LogoDetector(private val context: Context) {
         }
 
         // Build final results: use the best-cell similarity + its centre as imageX/Y
+        // ── TASK 1: Filter by strict confidence threshold ─────────────────────
         return brandBest.entries
             .filter  { (_, v) -> v.first >= minSimilarity }
             .sortedByDescending { (_, v) -> v.first }
@@ -299,5 +397,31 @@ class LogoDetector(private val context: Context) {
             }
     }
 
-    companion object { private const val TAG = "LogoDetector" }
+    // ── FIX: Singleton companion object ──────────────────────────────────────
+    // Before this fix, LogoDetector was created with `remember { LogoDetector(context) }`
+    // inside LogoScanScreen — meaning every time the user navigated to that
+    // screen, the TFLite model and embeddings database were reloaded from disk
+    // (300–600 ms on mid-range devices).
+    //
+    // The singleton ensures the heavy init() runs exactly once for the lifetime
+    // of the app process, and every screen visit gets the already-warm instance.
+    //
+    // Usage: LogoDetector.getInstance(context)  — replaces `LogoDetector(context)`
+
+    companion object {
+        private const val TAG = "LogoDetector"
+
+        @Volatile
+        private var instance: LogoDetector? = null
+
+        /**
+         * Returns the process-singleton [LogoDetector], creating it on the first
+         * call.  Must be called from a background thread (IO / Default dispatcher)
+         * because the constructor loads the TFLite model and the embeddings DB.
+         */
+        fun getInstance(context: Context): LogoDetector =
+            instance ?: synchronized(this) {
+                instance ?: LogoDetector(context.applicationContext).also { instance = it }
+            }
+    }
 }
