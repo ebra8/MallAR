@@ -1,0 +1,77 @@
+<resources>
+    <string name="app_name">مولار</string>
+
+    <!-- Splash -->
+    <string name="start">ابدأ</string>
+
+    <!-- Permissions -->
+    <string name="permissions_title">مولار يحتاج إذنك</string>
+    <string name="permissions_subtitle">لمساعدتك في التنقل في المول، يحتاج مولار الوصول إلى التالي</string>
+    <string name="enable_camera">تفعيل الكاميرا</string>
+    <string name="enable_location">تفعيل الموقع</string>
+    <string name="enable_motion">تفعيل الحركة</string>
+    <string name="continue_btn">متابعة</string>
+
+    <!-- Phone Auth -->
+    <string name="enter_phone">أدخل رقم هاتفك</string>
+    <string name="phone_subtitle">ستصلك رسالة تحتوي على رمز مكون من ٦ أرقام</string>
+    <string name="phone_label">رقم الهاتف</string>
+    <string name="send">إرسال</string>
+    <string name="skip">تخطي</string>
+    <string name="country_code">+٢٠</string>
+
+    <!-- OTP -->
+    <string name="verify_code">تحقق من الرمز</string>
+    <string name="otp_subtitle">أرسلنا رمز مكون من ٦ أرقام إلى رقم هاتفك.</string>
+    <string name="verify">تحقق</string>
+
+    <!-- Logo Scan -->
+    <string name="scan_instruction">وجّه الكاميرا نحو شعار متجر لتحديد موقعك</string>
+
+    <!-- Store Search -->
+    <string name="search_hint">إلى أين تريد الذهاب…</string>
+    <string name="search">بحث</string>
+    <string name="no_stores_found">لم يتم العثور على متاجر</string>
+
+    <!-- AR Navigation -->
+    <string name="direction_left">✈ يسار:</string>
+    <string name="show_road">عرض الطريق →</string>
+
+    <!-- Welcome Screen -->
+    <string name="get_started">ابدأ الآن</string>
+    <string name="loading">جاري التحميل</string>
+    <string name="welcome_title">ابحث عن المكان\nالذي تريده</string>
+    <string name="sign_in">تسجيل الدخول</string>
+    <string name="sign_up">إنشاء حساب</string>
+    <string name="skip_for_now">تخطي الآن</string>
+
+    <!-- Auth Screens -->
+    <string name="create_account">إنشاء حساب</string>
+    <string name="enter_name">أدخل اسمك للبدء</string>
+    <string name="first_name">الاسم الأول</string>
+    <string name="last_name">الاسم الأخير</string>
+    <string name="welcome_user">مرحباً بك، %1$s!</string>
+    <string name="enter_phone_nl">أدخل\nرقم الهاتف</string>
+    <string name="receive_6_digit">ستصلك رسالة تحتوي على رمز مكون من ٦ أرقام</string>
+    <string name="phone_placeholder">رقم الهاتف (مثال: 10 123 456 78)</string>
+    <string name="send_code">إرسال الرمز</string>
+    <string name="we_sent_code">أرسلنا رمزاً من ٦ أرقام إلى هاتفك</string>
+    <string name="enter_otp">أدخل الرمز المكون من ٦ أرقام</string>
+    <string name="did_not_receive">لم يصلك الرمز؟ أعد الإرسال</string>
+    <string name="welcome_back">مرحباً بعودتك</string>
+    <string name="enter_phone_signin">أدخل رقم هاتفك لتسجيل الدخول</string>
+
+    <!-- Profile Screen -->
+    <string name="profile">الملف الشخصي</string>
+    <string name="guest">زائر</string>
+    <string name="sign_in_features">قم بتسجيل الدخول للوصول إلى كافة الميزات</string>
+    <string name="favorite_stores">المتاجر المفضلة</string>
+    <string name="no_favorites">لا توجد مفضلة بعد</string>
+    <string name="bookmark_hint">احفظ المتاجر من الشاشة الرئيسية</string>
+    <string name="preferences">التفضيلات</string>
+    <string name="language">اللغة</string>
+    <string name="dark_mode">الوضع الداكن</string>
+    <string name="sign_out">تسجيل الخروج</string>
+    <string name="store_inside_mall">متجر · داخل المول</string>
+
+</resources>

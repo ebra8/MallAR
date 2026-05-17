@@ -3,6 +3,7 @@ package com.example.mallar
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Bundle
 
 import androidx.activity.ComponentActivity
@@ -15,13 +16,36 @@ import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.mallar.data.AppPreferences
+import com.example.mallar.data.FavoritesManager
 import com.example.mallar.ui.screens.*
 import com.example.mallar.ui.theme.MallARTheme
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
+    override fun attachBaseContext(newBase: Context) {
+        // Apply saved language preference before inflation
+        val prefs = newBase.getSharedPreferences("mallar_app_prefs", Context.MODE_PRIVATE)
+        val lang = prefs.getString("language", "en") ?: "en"
+        val locale = Locale(lang)
+        Locale.setDefault(locale)
+        val config = Configuration(newBase.resources.configuration).apply {
+            setLocale(locale)
+            setLayoutDirection(locale)
+        }
+        @Suppress("DEPRECATION")
+        newBase.resources.updateConfiguration(config, newBase.resources.displayMetrics)
+        super.attachBaseContext(newBase.createConfigurationContext(config))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize preference managers
+        AppPreferences.init(this)
+        FavoritesManager.init(this)
+
         setContent {
             MallARTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -53,6 +77,11 @@ fun MallARNavGraph(context: Context) {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    fun markNotFirstLaunch() {
+        isFirstLaunch.value = false
+        prefs.edit().putBoolean("is_first_launch", false).apply()
+    }
+
     NavHost(
         navController    = navController,
         startDestination = "splash"
@@ -77,15 +106,17 @@ fun MallARNavGraph(context: Context) {
             )
         }
 
-        // ── Welcome (first-time / sign-in) ────────────────────────────────────
+        // ── Welcome (first-time / sign-in / sign-up) ─────────────────────────
         composable("welcome") {
             WelcomeScreen(
-                onPhoneAuthClick = {
-                    navController.navigate("phone_auth")
+                onSignInClick = {
+                    navController.navigate("sign_in")
+                },
+                onSignUpClick = {
+                    navController.navigate("sign_up")
                 },
                 onSkipClick = {
-                    isFirstLaunch.value = false
-                    prefs.edit().putBoolean("is_first_launch", false).apply()
+                    markNotFirstLaunch()
                     navController.navigate("home") {
                         popUpTo("welcome") { inclusive = true }
                     }
@@ -93,7 +124,45 @@ fun MallARNavGraph(context: Context) {
             )
         }
 
-        // ── Phone Auth ────────────────────────────────────────────────────────
+        // ── Sign Up (new) ────────────────────────────────────────────────────
+        composable("sign_up") {
+            SignUpScreen(
+                onBackClick = { navController.popBackStack() },
+                onSuccess = {
+                    markNotFirstLaunch()
+                    navController.navigate("home") {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+                onSkipClick = {
+                    markNotFirstLaunch()
+                    navController.navigate("home") {
+                        popUpTo("sign_up") { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        // ── Sign In (unified — phone + OTP on one screen) ────────────────────
+        composable("sign_in") {
+            SignInScreen(
+                onBackClick = { navController.popBackStack() },
+                onSuccess = {
+                    markNotFirstLaunch()
+                    navController.navigate("home") {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+                onSkipClick = {
+                    markNotFirstLaunch()
+                    navController.navigate("home") {
+                        popUpTo("sign_in") { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        // ── Phone Auth (kept for backward compat, redirects to sign_in) ──────
         composable("phone_auth") {
             PhoneAuthScreen(
                 onBackClick  = { navController.popBackStack() },
@@ -102,8 +171,7 @@ fun MallARNavGraph(context: Context) {
                     navController.navigate("otp_verify")
                 },
                 onSkipClick  = {
-                    isFirstLaunch.value = false
-                    prefs.edit().putBoolean("is_first_launch", false).apply()
+                    markNotFirstLaunch()
                     navController.navigate("home") {
                         popUpTo("phone_auth") { inclusive = true }
                     }
@@ -111,14 +179,13 @@ fun MallARNavGraph(context: Context) {
             )
         }
 
-        // ── OTP Verify ────────────────────────────────────────────────────────
+        // ── OTP Verify (kept for backward compat) ────────────────────────────
         composable("otp_verify") {
             OtpVerifyScreen(
                 verificationId = verificationId,
                 onBackClick    = { navController.popBackStack() },
                 onSuccess      = {
-                    isFirstLaunch.value = false
-                    prefs.edit().putBoolean("is_first_launch", false).apply()
+                    markNotFirstLaunch()
                     navController.navigate("home") {
                         popUpTo(0) { inclusive = true }
                     }
@@ -160,7 +227,7 @@ fun MallARNavGraph(context: Context) {
                     }
                 },
                 onSettingsClick = {
-                    navController.navigate("settings")
+                    navController.navigate("profile")
                 },
                 onVoiceClick = {
                     val target =
@@ -183,7 +250,7 @@ fun MallARNavGraph(context: Context) {
                 preselectedDestination = true,
                 onBackFromLogo = { navController.popBackStack() },
                 onSettingsClick  = {
-                    navController.navigate("settings")
+                    navController.navigate("profile")
                 },
                 onStoreSelected  = { isCameraMode ->
                     NavigationState.startWithAr = isCameraMode
@@ -201,7 +268,7 @@ fun MallARNavGraph(context: Context) {
             LogoScanScreen(
                 onBackFromLogo = { navController.popBackStack() },
                 onSettingsClick = {
-                    navController.navigate("settings")
+                    navController.navigate("profile")
                 },
                 onStoreSelected = { isCameraMode ->
                     NavigationState.startWithAr = isCameraMode
@@ -217,9 +284,23 @@ fun MallARNavGraph(context: Context) {
             )
         }
 
-        // ── Settings ──────────────────────────────────────────────────────────
+        // ── Profile (replaces Settings) ──────────────────────────────────────
+        composable("profile") {
+            ProfileScreen(
+                onBackClick   = { navController.popBackStack() },
+                onLogoutClick = {
+                    isFirstLaunch.value = true
+                    prefs.edit().putBoolean("is_first_launch", true).apply()
+                    navController.navigate("welcome") {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        // ── Settings (kept for backward compat, routes to profile) ────────────
         composable("settings") {
-            SettingsScreen(
+            ProfileScreen(
                 onBackClick   = { navController.popBackStack() },
                 onLogoutClick = {
                     isFirstLaunch.value = true

@@ -42,12 +42,15 @@ fun StoreSearchScreen(
     val context = LocalContext.current
     val allPlaces = remember { PlaceRepository.load(context) }
     var searchQuery by remember { mutableStateOf("") }
+    val isDarkMode by com.example.mallar.data.AppPreferences.isDarkMode.collectAsState(initial = false)
+    val colorScheme = MaterialTheme.colorScheme
+
     val filteredPlaces = remember(searchQuery) {
         if (searchQuery.isBlank()) allPlaces
         else allPlaces.filter { it.brand.contains(searchQuery, ignoreCase = true) }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(SurfaceLight)) {
+    Box(modifier = Modifier.fillMaxSize().background(colorScheme.background)) {
         // ── Camera/Mall overlay header ───────────────────────────────────────
         Box(
             modifier = Modifier
@@ -68,10 +71,10 @@ fun StoreSearchScreen(
                     onClick = onBackClick,
                     modifier = Modifier.size(48.dp),
                     shape = CircleShape,
-                    color = White.copy(alpha = 0.9f)
+                    color = if (isDarkMode) colorScheme.surfaceVariant else White.copy(alpha = 0.9f)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Teal)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = colorScheme.onSurface)
                     }
                 }
             }
@@ -82,7 +85,7 @@ fun StoreSearchScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = 220.dp)
-                .background(White, RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
+                .background(colorScheme.surface, RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
         ) {
             // Search bar
             Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
@@ -90,7 +93,7 @@ fun StoreSearchScreen(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
                     placeholder = {
-                        Text("Find store or brand…", color = TextSecondary.copy(alpha = 0.5f))
+                        Text(androidx.compose.ui.res.stringResource(com.example.mallar.R.string.search_hint), color = colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
                     },
                     modifier = Modifier.fillMaxWidth().shadow(8.dp, RoundedCornerShape(18.dp)),
                     leadingIcon = {
@@ -109,8 +112,10 @@ fun StoreSearchScreen(
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Teal,
                         unfocusedBorderColor = Color.Transparent,
-                        focusedContainerColor = SurfaceLight,
-                        unfocusedContainerColor = SurfaceLight
+                        focusedContainerColor = colorScheme.surfaceVariant,
+                        unfocusedContainerColor = colorScheme.surfaceVariant,
+                        focusedTextColor = colorScheme.onSurface,
+                        unfocusedTextColor = colorScheme.onSurface
                     ),
                     singleLine = true
                 )
@@ -128,7 +133,7 @@ fun StoreSearchScreen(
                             modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("No stores found", color = TextSecondary, fontSize = 16.sp)
+                            Text(androidx.compose.ui.res.stringResource(com.example.mallar.R.string.no_stores_found), color = colorScheme.onSurfaceVariant, fontSize = 16.sp)
                         }
                     }
                 } else {
@@ -151,6 +156,7 @@ private fun StoreCard(
     index: Int,
     onClick: () -> Unit
 ) {
+    val colorScheme = MaterialTheme.colorScheme
     var isVisible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         delay(index * 60L)
@@ -167,7 +173,7 @@ private fun StoreCard(
                 .fillMaxWidth()
                 .shadow(2.dp, RoundedCornerShape(20.dp)),
             shape = RoundedCornerShape(20.dp),
-            color = White
+            color = colorScheme.surfaceVariant
         ) {
             Row(
                 modifier = Modifier.padding(12.dp),
@@ -177,7 +183,7 @@ private fun StoreCard(
                 Surface(
                     modifier = Modifier.size(60.dp),
                     shape = RoundedCornerShape(14.dp),
-                    color = SurfaceLight
+                    color = colorScheme.background
                 ) {
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
@@ -200,7 +206,7 @@ private fun StoreCard(
                         text = place.brand,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 16.sp,
-                        color = TextPrimary
+                        color = colorScheme.onSurface
                     )
                     Spacer(modifier = Modifier.height(3.dp))
                     // Deterministic distance estimate from X,Y coordinates
@@ -220,19 +226,19 @@ private fun StoreCard(
                         Spacer(modifier = Modifier.width(3.dp))
                         Text(
                             text = "${distM}m",
-                            color = TextSecondary,
+                            color = colorScheme.onSurfaceVariant,
                             fontSize = 12.sp
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
                             text = "• ${mins}min",
-                            color = TextSecondary,
+                            color = colorScheme.onSurfaceVariant,
                             fontSize = 12.sp
                         )
                     }
                 }
 
-                Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = DividerColor)
+                Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = colorScheme.onSurfaceVariant)
             }
         }
     }

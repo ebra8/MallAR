@@ -112,7 +112,7 @@ fun SplashScreen(
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
                     ) {
                         Text(
-                            text = "Get Started",
+                            text = androidx.compose.ui.res.stringResource(R.string.get_started),
                             fontSize = 20.sp,
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = 0.5.sp
@@ -161,7 +161,7 @@ fun SplashScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Loading",
+                        text = androidx.compose.ui.res.stringResource(R.string.loading),
                         color = White.copy(alpha = 0.7f),
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium

@@ -4,7 +4,6 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -17,44 +16,39 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.mallar.R
 import com.example.mallar.ui.theme.Teal
 import com.example.mallar.ui.theme.White
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 @Composable
 fun WelcomeScreen(
-    onPhoneAuthClick: () -> Unit,
+    onSignInClick: () -> Unit,
+    onSignUpClick: () -> Unit,
     onSkipClick: () -> Unit
 ) {
     val context = LocalContext.current
     val view = LocalView.current
-    val scope = rememberCoroutineScope()
     var backPressedTime by remember { mutableLongStateOf(0L) }
+
+    val isDarkMode by com.example.mallar.data.AppPreferences.isDarkMode.collectAsState()
 
     // Ensure dark icons on white background
     SideEffect {
         val window = (context as? android.app.Activity)?.window
         if (window != null) {
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = true
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !isDarkMode
         }
     }
 
     BackHandler {
         val currentTime = System.currentTimeMillis()
         if (currentTime - backPressedTime < 2000) {
-            // Exit app
             (context as? android.app.Activity)?.finish()
         } else {
             backPressedTime = currentTime
@@ -65,9 +59,9 @@ fun WelcomeScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White)
+            .background(if (isDarkMode) com.example.mallar.ui.theme.DarkBackground else Color.White)
     ) {
-        // Decorative background element (optional, based on dekor.png)
+        // Decorative background element
         Image(
             painter = painterResource(id = R.drawable.dekor),
             contentDescription = null,
@@ -88,10 +82,10 @@ fun WelcomeScreen(
 
             // Heading
             Text(
-                text = "Find the place you\nare looking for",
+                text = androidx.compose.ui.res.stringResource(R.string.welcome_title),
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
-                color = Teal,
+                color = if (isDarkMode) White else Teal,
                 textAlign = TextAlign.Center,
                 lineHeight = 36.sp
             )
@@ -110,31 +104,14 @@ fun WelcomeScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // "Sign Up" bit (matching design)
-            Text(
-                text = buildAnnotatedString {
-                    append("Dont have an account? ")
-                    withStyle(style = SpanStyle(
-                        color = Teal,
-                        fontWeight = FontWeight.Bold,
-                        textDecoration = TextDecoration.Underline
-                    )) {
-                        append("Sign Up")
-                    }
-                },
-                fontSize = 16.sp,
-                color = Teal.copy(alpha = 0.8f),
-                modifier = Modifier.clickable { /* Handle Sign Up if needed */ }
-            )
+            // ── Option B: Two separate buttons ───────────────────────────────
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Main Action Button
+            // Sign In Button (primary)
             Button(
-                onClick = onPhoneAuthClick,
+                onClick = onSignInClick,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(64.dp)
+                    .height(60.dp)
                     .shadow(12.dp, RoundedCornerShape(16.dp)),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -143,7 +120,28 @@ fun WelcomeScreen(
                 )
             ) {
                 Text(
-                    text = "Sign In with Phone Number",
+                    text = androidx.compose.ui.res.stringResource(R.string.sign_in),
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Sign Up Button (secondary / outlined)
+            OutlinedButton(
+                onClick = onSignUpClick,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(60.dp),
+                shape = RoundedCornerShape(16.dp),
+                border = ButtonDefaults.outlinedButtonBorder.copy(width = 2.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = Teal
+                )
+            ) {
+                Text(
+                    text = androidx.compose.ui.res.stringResource(R.string.sign_up),
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -151,14 +149,14 @@ fun WelcomeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Skip Button (as requested)
+            // Skip Button
             TextButton(
                 onClick = onSkipClick,
                 modifier = Modifier.padding(bottom = 32.dp)
             ) {
                 Text(
-                    text = "Skip for now",
-                    color = Teal.copy(alpha = 0.6f),
+                    text = androidx.compose.ui.res.stringResource(R.string.skip_for_now),
+                    color = if (isDarkMode) White.copy(0.7f) else Teal.copy(alpha = 0.6f),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium
                 )
@@ -166,9 +164,3 @@ fun WelcomeScreen(
         }
     }
 }
-
-// Extension to allow brands_image to be used from drawable
-// Since it was in res/welcome-screen, we need to make sure the project can see it.
-// Usually resources should be in drawable-xhdpi folders etc. 
-// But if they are just in res/welcome-screen, Android might not find them via R.drawable.
-// Let's check where they are exactly.

@@ -42,6 +42,8 @@ import kotlinx.coroutines.delay
 @Composable
 fun PermissionsScreen(onContinueClick: () -> Unit) {
     val context = LocalContext.current
+    val isDarkMode by com.example.mallar.data.AppPreferences.isDarkMode.collectAsState(initial = false)
+    val colorScheme = MaterialTheme.colorScheme
 
     var cameraGranted by remember {
         mutableStateOf(
@@ -97,7 +99,7 @@ fun PermissionsScreen(onContinueClick: () -> Unit) {
         entranceAlpha.animateTo(1f, animationSpec = tween(800))
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(White)) {
+    Box(modifier = Modifier.fillMaxSize().background(colorScheme.background)) {
         Image(
             painter = painterResource(id = R.drawable.background),
             contentDescription = null,
@@ -131,7 +133,7 @@ fun PermissionsScreen(onContinueClick: () -> Unit) {
                     .fillMaxWidth()
                     .weight(1.1f),
                 shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
-                color = White,
+                color = colorScheme.surface,
                 shadowElevation = 24.dp
             ) {
                 Column(
@@ -145,8 +147,8 @@ fun PermissionsScreen(onContinueClick: () -> Unit) {
                             withStyle(SpanStyle(color = Teal, fontWeight = FontWeight.ExtraBold)) {
                                 append("MallAR ")
                             }
-                            withStyle(SpanStyle(color = TextPrimary, fontWeight = FontWeight.Bold)) {
-                                append("Permissions")
+                            withStyle(SpanStyle(color = colorScheme.onSurface, fontWeight = FontWeight.Bold)) {
+                                append(androidx.compose.ui.res.stringResource(R.string.permissions_title).removePrefix("MallAR "))
                             }
                         },
                         fontSize = 28.sp,
@@ -157,8 +159,8 @@ fun PermissionsScreen(onContinueClick: () -> Unit) {
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
-                        text = "To guide you accurately in AR, we need to access a few basic services.",
-                        color = TextSecondary,
+                        text = androidx.compose.ui.res.stringResource(R.string.permissions_subtitle),
+                        color = colorScheme.onSurfaceVariant,
                         fontSize = 14.sp,
                         textAlign = TextAlign.Center,
                         lineHeight = 20.sp,
@@ -172,7 +174,7 @@ fun PermissionsScreen(onContinueClick: () -> Unit) {
                         PermissionItemFixed(
                             delay = 200,
                             icon = Icons.Outlined.CameraAlt,
-                            title = "AR Camera",
+                            title = androidx.compose.ui.res.stringResource(R.string.enable_camera),
                             subtitle = "Place path markers",
                             granted = cameraGranted,
                             color = Color(0xFF167D92),
@@ -182,7 +184,7 @@ fun PermissionsScreen(onContinueClick: () -> Unit) {
                         PermissionItemFixed(
                             delay = 350,
                             icon = Icons.Outlined.LocationOn,
-                            title = "Mall Location",
+                            title = androidx.compose.ui.res.stringResource(R.string.enable_location),
                             subtitle = "Find which floor you are on",
                             granted = locationGranted,
                             color = Color(0xFF2099B9),
@@ -192,7 +194,7 @@ fun PermissionsScreen(onContinueClick: () -> Unit) {
                         PermissionItemFixed(
                             delay = 500,
                             icon = Icons.Outlined.DirectionsRun,
-                            title = "Step Tracking",
+                            title = androidx.compose.ui.res.stringResource(R.string.enable_motion),
                             subtitle = "Estimate movement speed",
                             granted = motionGranted,
                             color = Color(0xFFC39D51),
@@ -222,7 +224,7 @@ fun PermissionsScreen(onContinueClick: () -> Unit) {
                         )
                     ) {
                         Text(
-                            text = if (allGranted) "Redirecting..." else "Grant All Permissions",
+                            text = if (allGranted) "..." else androidx.compose.ui.res.stringResource(R.string.continue_btn),
                             fontSize = 20.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
@@ -294,12 +296,12 @@ private fun PermissionItemFixed(
                     text = title,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
-                    color = if (granted) SuccessGreen else TextPrimary
+                    color = if (granted) SuccessGreen else MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = subtitle,
                     fontSize = 12.sp,
-                    color = TextSecondary
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
