@@ -39,6 +39,7 @@ fun StoreDetailScreen(
     onBackClick: () -> Unit,
     onStartNavigation: (Boolean) -> Unit
 ) {
+    val isDarkMode by com.example.mallar.data.AppPreferences.isDarkMode.collectAsState()
     val context = LocalContext.current
     // Compute distance synchronously so it's ready on first frame
     val distM = remember(place) {
@@ -65,7 +66,7 @@ fun StoreDetailScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF1A1A2E))
+            .background(if (isDarkMode) com.example.mallar.ui.theme.DarkBackground else Color(0xFFF5F7FA))
     ) {
         // ── Background gradient ──────────────────────────────────────────────
         Box(
@@ -73,7 +74,8 @@ fun StoreDetailScreen(
                 .fillMaxSize()
                 .background(
                     androidx.compose.ui.graphics.Brush.verticalGradient(
-                        listOf(Color(0xFF1A1A2E), Color(0xFF16213E), CameraPlaceholder)
+                        if (isDarkMode) listOf(Color(0xFF1A1A2E), Color(0xFF16213E), com.example.mallar.ui.theme.DarkBackground)
+                        else listOf(com.example.mallar.ui.theme.Teal.copy(0.1f), com.example.mallar.ui.theme.TealLight.copy(0.05f), Color.Transparent)
                     )
                 )
         )
@@ -91,10 +93,10 @@ fun StoreDetailScreen(
                 onClick = onBackClick,
                 modifier = Modifier.size(48.dp),
                 shape = CircleShape,
-                color = White.copy(alpha = 0.15f)
+                color = if (isDarkMode) White.copy(alpha = 0.15f) else Color.Black.copy(0.05f)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = White)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = if (isDarkMode) White else Color.Black)
                 }
             }
 
@@ -102,10 +104,10 @@ fun StoreDetailScreen(
                 onClick = onBackClick,
                 modifier = Modifier.size(48.dp),
                 shape = CircleShape,
-                color = White.copy(alpha = 0.15f)
+                color = if (isDarkMode) White.copy(alpha = 0.15f) else Color.Black.copy(0.05f)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Close, "Close", tint = White)
+                    Icon(Icons.Filled.Close, "Close", tint = if (isDarkMode) White else Color.Black)
                 }
             }
         }
@@ -122,9 +124,9 @@ fun StoreDetailScreen(
             Surface(
                 modifier = Modifier
                     .size(130.dp)
-                    .shadow(32.dp, RoundedCornerShape(28.dp)),
+                    .shadow(if (isDarkMode) 0.dp else 24.dp, RoundedCornerShape(28.dp)),
                 shape = RoundedCornerShape(28.dp),
-                color = White
+                color = if (isDarkMode) com.example.mallar.ui.theme.DarkCard else White
             ) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
@@ -147,7 +149,7 @@ fun StoreDetailScreen(
                 text = place.brand,
                 fontWeight = FontWeight.ExtraBold,
                 fontSize = 28.sp,
-                color = White,
+                color = if (isDarkMode) com.example.mallar.ui.theme.DarkTextPrimary else com.example.mallar.ui.theme.TextPrimary,
                 textAlign = TextAlign.Center
             )
 
@@ -162,7 +164,7 @@ fun StoreDetailScreen(
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     "${distM}m",
-                    color = White.copy(alpha = 0.8f),
+                    color = if (isDarkMode) White.copy(alpha = 0.8f) else com.example.mallar.ui.theme.TextSecondary,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -175,7 +177,7 @@ fun StoreDetailScreen(
                 Spacer(modifier = Modifier.width(16.dp))
                 Text(
                     "${mins}min",
-                    color = White.copy(alpha = 0.8f),
+                    color = if (isDarkMode) White.copy(alpha = 0.8f) else com.example.mallar.ui.theme.TextSecondary,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -240,7 +242,7 @@ fun StoreDetailScreen(
 
             Text(
                 text = "Choose your navigation mode to ${place.brand}",
-                color = White.copy(alpha = 0.5f),
+                color = if (isDarkMode) White.copy(alpha = 0.5f) else com.example.mallar.ui.theme.TextSecondary,
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center
             )

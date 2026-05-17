@@ -78,6 +78,12 @@ fun HomeScreen(
     onMapClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val isDarkMode by com.example.mallar.data.AppPreferences.isDarkMode.collectAsState()
+
+    val currentSurface = if (isDarkMode) com.example.mallar.ui.theme.DarkBackground else HomeSurface
+    val currentCard = if (isDarkMode) com.example.mallar.ui.theme.DarkCard else HomeCard
+    val currentTextMain = if (isDarkMode) com.example.mallar.ui.theme.DarkTextPrimary else HomeTextMain
+    val currentTextSub = if (isDarkMode) com.example.mallar.ui.theme.DarkTextSecondary else HomeTextSub
 
     // painterResource must be called inside a @Composable
     val clothesPainter = painterResource(R.drawable.clothes)
@@ -133,7 +139,7 @@ fun HomeScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(HomeSurface)
+            .background(currentSurface)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
 
@@ -142,6 +148,7 @@ fun HomeScreen(
                 userName        = userName,
                 searchQuery     = searchQuery,
                 searchFocused   = searchFocused,
+                isDarkMode      = isDarkMode,
                 onSearchChange  = { searchQuery = it; selectedCatIdx = 0 },
                 onSearchFocus   = { searchFocused = it },
                 onSettingsClick = onSettingsClick,
@@ -156,7 +163,7 @@ fun HomeScreen(
 
                 // ── Categories ────────────────────────────────────────────────
                 item(key = "spacer_top")  { Spacer(Modifier.height(22.dp)) }
-                item(key = "cat_header")  { SectionHeader(title = "Categories", onSeeAll = {}) }
+                item(key = "cat_header")  { SectionHeader(title = "Categories", onSeeAll = {}, currentTextMain = currentTextMain) }
                 item(key = "spacer_cat")  { Spacer(Modifier.height(12.dp)) }
                 item(key = "cat_row") {
                     LazyRow(
@@ -167,6 +174,7 @@ fun HomeScreen(
                             CategoryChip(
                                 category = cat,
                                 selected = selectedCatIdx == idx,
+                                isDarkMode = isDarkMode,
                                 onClick  = { selectedCatIdx = idx }
                             )
                         }
@@ -177,11 +185,11 @@ fun HomeScreen(
                     // ── Search results ─────────────────────────────────────────
                     item(key = "search_spacer")  { Spacer(Modifier.height(24.dp)) }
                     item(key = "search_header")  {
-                        SectionHeader(title = "Results (${displayedPlaces.size})", onSeeAll = null)
+                        SectionHeader(title = "Results (${displayedPlaces.size})", onSeeAll = null, currentTextMain = currentTextMain)
                     }
                     item(key = "search_spacer2") { Spacer(Modifier.height(12.dp)) }
                     if (displayedPlaces.isEmpty()) {
-                        item(key = "search_empty") { EmptyState() }
+                        item(key = "search_empty") { EmptyState(currentTextSub) }
                     } else {
                         item(key = "search_row") {
                             LazyRow(
@@ -189,7 +197,7 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 items(displayedPlaces, key = { it.brand }) { place ->
-                                    PlaceCard(place = place, onClick = { onDestinationSelected(place) })
+                                    PlaceCard(place = place, isDarkMode = isDarkMode, currentCard = currentCard, currentTextMain = currentTextMain, currentTextSub = currentTextSub, onClick = { onDestinationSelected(place) })
                                 }
                             }
                         }
@@ -199,16 +207,20 @@ fun HomeScreen(
 
                     // ── All Stores ─────────────────────────────────────────────
                     item(key = "stores_spacer")  { Spacer(Modifier.height(28.dp)) }
-                    item(key = "stores_header")  { SectionHeader(title = "All Stores", onSeeAll = {}) }
+                    item(key = "stores_header")  { SectionHeader(title = "All Stores", onSeeAll = {}, currentTextMain = currentTextMain) }
                     item(key = "stores_spacer2") { Spacer(Modifier.height(12.dp)) }
 
                     val list = if (selectedCatIdx == 0) allPlaces else displayedPlaces
                     if (list.isEmpty()) {
-                        item(key = "stores_empty") { EmptyState() }
+                        item(key = "stores_empty") { EmptyState(currentTextSub) }
                     } else {
                         items(list, key = { it.brand }) { place ->
                             StoreRow(
                                 place    = place,
+                                isDarkMode = isDarkMode,
+                                currentCard = currentCard,
+                                currentTextMain = currentTextMain,
+                                currentTextSub = currentTextSub,
                                 onClick  = { onDestinationSelected(place) },
                                 modifier = Modifier.padding(horizontal = 20.dp)
                             )
@@ -225,6 +237,8 @@ fun HomeScreen(
         BottomNav(
             items       = navItems,
             activeIndex = activeNavIdx,
+            isDarkMode  = isDarkMode,
+            currentCard = currentCard,
             onSelect    = { idx ->
                 activeNavIdx = idx
                 when (idx) {
@@ -246,6 +260,7 @@ private fun HeroHeader(
     userName: String,
     searchQuery: String,
     searchFocused: Boolean,
+    isDarkMode: Boolean,
     onSearchChange: (String) -> Unit,
     onSearchFocus: (Boolean) -> Unit,
     onSettingsClick: () -> Unit,
@@ -271,7 +286,8 @@ private fun HeroHeader(
             .fillMaxWidth()
             .background(
                 Brush.verticalGradient(
-                    colors = listOf(HomePrimary, HomePrimaryLight, Color(0xFF9dd8e2), Color(0xFFe8f6f8))
+                    colors = if (isDarkMode) listOf(Color(0xFF0F5F5F), Color(0xFF0A3D42), com.example.mallar.ui.theme.DarkBackground)
+                             else listOf(HomePrimary, HomePrimaryLight, Color(0xFF9dd8e2), Color(0xFFe8f6f8))
                 )
             )
     ) {
@@ -314,14 +330,14 @@ private fun HeroHeader(
                 modifier = Modifier
                     .fillMaxWidth()
                     .shadow(
-                        elevation    = if (searchFocused) 6.dp else 4.dp,
+                        elevation    = if (isDarkMode) 0.dp else if (searchFocused) 6.dp else 4.dp,
                         shape        = RoundedCornerShape(28.dp),
                         ambientColor = if (searchFocused) HomePrimary.copy(0.2f) else Color.Black.copy(0.1f)
                     )
-                    .background(Color.White, RoundedCornerShape(28.dp))
+                    .background(if (isDarkMode) com.example.mallar.ui.theme.DarkCard else Color.White, RoundedCornerShape(28.dp))
                     .border(
-                        width = if (searchFocused) 2.dp else 0.dp,
-                        color = if (searchFocused) HomePrimary else Color.Transparent,
+                        width = if (searchFocused) 2.dp else if (isDarkMode) 1.dp else 0.dp,
+                        color = if (searchFocused) HomePrimary else if (isDarkMode) Color.White.copy(0.1f) else Color.Transparent,
                         shape = RoundedCornerShape(28.dp)
                     )
                     .padding(start = 18.dp, end = 8.dp),
@@ -340,7 +356,7 @@ private fun HeroHeader(
                     singleLine    = true,
                     textStyle     = androidx.compose.ui.text.TextStyle(
                         fontSize   = 15.sp,
-                        color      = HomeTextMain,
+                        color      = if (isDarkMode) com.example.mallar.ui.theme.DarkTextPrimary else HomeTextMain,
                         fontWeight = FontWeight.Normal
                     ),
                     modifier = Modifier
@@ -376,10 +392,10 @@ private fun HeroHeader(
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun CategoryChip(category: Category, selected: Boolean, onClick: () -> Unit) {
-    val bgColor   by animateColorAsState(if (selected) HomePrimary else HomeCard,    tween(200), label = "catBg")
-    val textColor by animateColorAsState(if (selected) Color.White else HomeTextSub, tween(200), label = "catText")
-    val elevation by animateDpAsState(if (selected) 0.dp else 2.dp, label = "catElev")
+private fun CategoryChip(category: Category, selected: Boolean, isDarkMode: Boolean, onClick: () -> Unit) {
+    val bgColor   by animateColorAsState(if (selected) HomePrimary else if (isDarkMode) com.example.mallar.ui.theme.DarkCard else HomeCard,    tween(200), label = "catBg")
+    val textColor by animateColorAsState(if (selected) Color.White else if (isDarkMode) com.example.mallar.ui.theme.DarkTextSecondary else HomeTextSub, tween(200), label = "catText")
+    val elevation by animateDpAsState(if (isDarkMode || selected) 0.dp else 2.dp, label = "catElev")
 
     Column(
         modifier = Modifier
@@ -424,14 +440,14 @@ private fun CategoryChip(category: Category, selected: Boolean, onClick: () -> U
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun PlaceCard(place: Place, onClick: () -> Unit) {
+private fun PlaceCard(place: Place, isDarkMode: Boolean, currentCard: Color, currentTextMain: Color, currentTextSub: Color, onClick: () -> Unit) {
     var saved by remember { mutableStateOf(false) }
 
     Card(
-        modifier  = Modifier.width(150.dp).clickable { onClick() },
+        modifier  = Modifier.width(150.dp).clickable { onClick() }.border(if (isDarkMode) 1.dp else 0.dp, Color.White.copy(0.05f), RoundedCornerShape(20.dp)),
         shape     = RoundedCornerShape(20.dp),
-        colors    = CardDefaults.cardColors(containerColor = HomeCard),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        colors    = CardDefaults.cardColors(containerColor = currentCard),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isDarkMode) 0.dp else 2.dp)
     ) {
         Column {
             Box(
@@ -484,14 +500,14 @@ private fun PlaceCard(place: Place, onClick: () -> Unit) {
                     text       = place.brand,
                     fontWeight = FontWeight.Bold,
                     fontSize   = 14.sp,
-                    color      = HomeTextMain,
+                    color      = currentTextMain,
                     maxLines   = 1,
                     overflow   = TextOverflow.Ellipsis
                 )
                 Text(
                     text     = "Store",
                     fontSize = 11.sp,
-                    color    = HomeTextSub,
+                    color    = currentTextSub,
                     modifier = Modifier.padding(top = 2.dp)
                 )
                 Spacer(Modifier.height(8.dp))
@@ -519,12 +535,13 @@ private fun PlaceCard(place: Place, onClick: () -> Unit) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun StoreRow(place: Place, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun StoreRow(place: Place, onClick: () -> Unit, modifier: Modifier = Modifier, isDarkMode: Boolean, currentCard: Color, currentTextMain: Color, currentTextSub: Color) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(16.dp))
-            .background(HomeCard, RoundedCornerShape(16.dp))
+            .shadow(if (isDarkMode) 0.dp else 1.dp, RoundedCornerShape(16.dp))
+            .background(currentCard, RoundedCornerShape(16.dp))
+            .border(if (isDarkMode) 1.dp else 0.dp, Color.White.copy(0.05f), RoundedCornerShape(16.dp))
             .clip(RoundedCornerShape(16.dp))
             .clickable { onClick() }
             .padding(12.dp),
@@ -564,12 +581,12 @@ private fun StoreRow(place: Place, onClick: () -> Unit, modifier: Modifier = Mod
                 text       = place.brand,
                 fontWeight = FontWeight.Bold,
                 fontSize   = 15.sp,
-                color      = HomeTextMain,
+                color      = currentTextMain,
                 maxLines   = 1,
                 overflow   = TextOverflow.Ellipsis
             )
             Spacer(Modifier.height(3.dp))
-            Text(text = "Store · Inside Mall", fontSize = 12.sp, color = HomeTextSub)
+            Text(text = "Store · Inside Mall", fontSize = 12.sp, color = currentTextSub)
         }
         Box(
             modifier = Modifier
@@ -592,7 +609,7 @@ private fun StoreRow(place: Place, onClick: () -> Unit, modifier: Modifier = Mod
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun SectionHeader(title: String, onSeeAll: (() -> Unit)?) {
+private fun SectionHeader(title: String, onSeeAll: (() -> Unit)?, currentTextMain: Color) {
     Row(
         modifier              = Modifier.fillMaxWidth().padding(horizontal = 22.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -602,7 +619,7 @@ private fun SectionHeader(title: String, onSeeAll: (() -> Unit)?) {
             text          = title,
             fontWeight    = FontWeight.Bold,
             fontSize      = 17.sp,
-            color         = HomeTextMain,
+            color         = currentTextMain,
             letterSpacing = (-0.2).sp
         )
         if (onSeeAll != null) {
@@ -626,6 +643,8 @@ private fun SectionHeader(title: String, onSeeAll: (() -> Unit)?) {
 private fun BottomNav(
     items: List<NavItem>,
     activeIndex: Int,
+    isDarkMode: Boolean,
+    currentCard: Color,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -638,8 +657,9 @@ private fun BottomNav(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .shadow(8.dp, RoundedCornerShape(28.dp))
-                .background(Color.White, RoundedCornerShape(28.dp))
+                .shadow(if (isDarkMode) 0.dp else 8.dp, RoundedCornerShape(28.dp))
+                .background(currentCard, RoundedCornerShape(28.dp))
+                .border(if (isDarkMode) 1.dp else 0.dp, Color.White.copy(0.05f), RoundedCornerShape(28.dp))
                 .padding(horizontal = 8.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment     = Alignment.CenterVertically
@@ -689,7 +709,7 @@ private fun BottomNav(
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun EmptyState() {
+private fun EmptyState(currentTextSub: Color) {
     Box(
         modifier         = Modifier.fillMaxWidth().padding(vertical = 40.dp),
         contentAlignment = Alignment.Center
@@ -701,7 +721,7 @@ private fun EmptyState() {
                 modifier = Modifier.size(48.dp)
             )
             Spacer(Modifier.height(10.dp))
-            Text("No stores found", color = HomeTextSub, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text("No stores found", color = currentTextSub, fontSize = 15.sp, fontWeight = FontWeight.Medium)
         }
     }
 }

@@ -123,6 +123,7 @@ fun LogoScanScreen(
     val context        = LocalContext.current
     var backPressedTime by remember { mutableLongStateOf(0L) }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val isDarkMode by com.example.mallar.data.AppPreferences.isDarkMode.collectAsState()
 
     var allPlaces         by remember { mutableStateOf<List<Place>>(emptyList()) }
     var mallGraph         by remember { mutableStateOf<com.example.mallar.data.MallGraph?>(null) }
@@ -600,8 +601,8 @@ fun LogoScanScreen(
         AnimatedVisibility(visible = flow == ScreenFlow.PICK_DESTINATION && !preselectedDestination,
             enter = fadeIn(tween(200)) + slideInVertically(tween(250)) { it / 10 },
             exit  = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it / 10 }) {
-            Column(Modifier.fillMaxSize().background(White)) {
-                Column(Modifier.fillMaxWidth().background(Teal).statusBarsPadding()
+            Column(Modifier.fillMaxSize().background(if (isDarkMode) com.example.mallar.ui.theme.DarkBackground else White)) {
+                Column(Modifier.fillMaxWidth().background(if (isDarkMode) com.example.mallar.ui.theme.DarkSurface else Teal).statusBarsPadding()
                     .padding(horizontal = 14.dp, vertical = 12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(onClick = { flow = ScreenFlow.SCAN_CONFIRM; searchQuery = "" },
@@ -619,14 +620,14 @@ fun LogoScanScreen(
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    Surface(Modifier.fillMaxWidth().height(46.dp).shadow(6.dp, RoundedCornerShape(23.dp)),
-                        RoundedCornerShape(23.dp), color = White) {
+                    Surface(Modifier.fillMaxWidth().height(46.dp).shadow(if (isDarkMode) 0.dp else 6.dp, RoundedCornerShape(23.dp)),
+                        RoundedCornerShape(23.dp), color = if (isDarkMode) com.example.mallar.ui.theme.DarkCard else White) {
                         Row(Modifier.fillMaxSize().padding(horizontal = 14.dp),
                             verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Filled.Search, null, tint = TextSecondary.copy(0.6f), modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            BasicTextField(value = searchQuery, onValueChange = { searchQuery = it },
-                                textStyle = LocalTextStyle.current.copy(fontSize = 15.sp, color = TextPrimary),
+                                BasicTextField(value = searchQuery, onValueChange = { searchQuery = it },
+                                    textStyle = LocalTextStyle.current.copy(fontSize = 15.sp, color = if (isDarkMode) com.example.mallar.ui.theme.DarkTextPrimary else TextPrimary),
                                 modifier = Modifier.weight(1f), singleLine = true,
                                 decorationBox = { inner ->
                                     if (searchQuery.isEmpty()) Text("Search destination…",
@@ -668,7 +669,7 @@ fun LogoScanScreen(
             exit  = fadeOut(tween(150))) {
             val dest = destination
             if (dest != null) {
-                Box(Modifier.fillMaxSize().background(Color(0xFFF5F7FA))) {
+                Box(Modifier.fillMaxSize().background(if (isDarkMode) com.example.mallar.ui.theme.DarkBackground else Color(0xFFF5F7FA))) {
                     Row(Modifier.fillMaxWidth().statusBarsPadding()
                         .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically) {
@@ -681,22 +682,22 @@ fun LogoScanScreen(
                                     destination = null
                                 }
                             },
-                            modifier = Modifier.size(42.dp), shape = CircleShape, color = White.copy(0.9f)) {
+                            modifier = Modifier.size(42.dp), shape = CircleShape, color = if (isDarkMode) com.example.mallar.ui.theme.DarkCard else White.copy(0.9f)) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary)
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = if (isDarkMode) White else TextPrimary)
                             }
                         }
                         Spacer(Modifier.width(10.dp))
-                        Surface(Modifier.weight(1f).height(44.dp).shadow(6.dp, RoundedCornerShape(22.dp)),
-                            RoundedCornerShape(22.dp), color = White) {
+                        Surface(Modifier.weight(1f).height(44.dp).shadow(if (isDarkMode) 0.dp else 6.dp, RoundedCornerShape(22.dp)),
+                            RoundedCornerShape(22.dp), color = if (isDarkMode) com.example.mallar.ui.theme.DarkCard else White) {
                             Box(Modifier.fillMaxSize().padding(horizontal = 16.dp), Alignment.CenterStart) {
-                                Text(dest.brand, color = TextPrimary, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                                Text(dest.brand, color = if (isDarkMode) White else TextPrimary, fontWeight = FontWeight.Medium, fontSize = 15.sp)
                             }
                         }
                     }
                     Surface(Modifier.fillMaxWidth().align(Alignment.Center)
-                        .padding(horizontal = 16.dp).shadow(24.dp, RoundedCornerShape(28.dp)),
-                        RoundedCornerShape(28.dp), color = White) {
+                        .padding(horizontal = 16.dp).shadow(if (isDarkMode) 0.dp else 24.dp, RoundedCornerShape(28.dp)),
+                        RoundedCornerShape(28.dp), color = if (isDarkMode) com.example.mallar.ui.theme.DarkCard else White) {
                         Column(Modifier.padding(20.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Surface(Modifier.size(70.dp), RoundedCornerShape(16.dp), color = SurfaceLight) {
@@ -708,16 +709,16 @@ fun LogoScanScreen(
                                 }
                                 Spacer(Modifier.width(14.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text(dest.brand, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = TextPrimary)
+                                    Text(dest.brand, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = if (isDarkMode) White else TextPrimary)
                                     Spacer(Modifier.height(4.dp))
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Filled.LocationOn, null, tint = RedAccent, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(3.dp))
-                                        Text("${destDistM}m", color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        Text("${destDistM}m", color = if (isDarkMode) White.copy(0.7f) else TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                         Spacer(Modifier.width(12.dp))
                                         Icon(Icons.Filled.AccessTime, null, tint = RedAccent, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(3.dp))
-                                        Text("${destMins}min", color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        Text("${destMins}min", color = if (isDarkMode) White.copy(0.7f) else TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                                 Surface(onClick = {
@@ -795,8 +796,8 @@ fun LogoScanScreen(
                 // Settings button
                 Box(
                     Modifier.size(48.dp).clip(CircleShape)
-                        .background(White)
-                        .shadow(4.dp, CircleShape)
+                        .background(if (isDarkMode) com.example.mallar.ui.theme.DarkCard else White)
+                        .shadow(if (isDarkMode) 0.dp else 4.dp, CircleShape)
                         .clickable { onSettingsClick() },
                     Alignment.Center
                 ) {
@@ -805,8 +806,8 @@ fun LogoScanScreen(
                 // Voice Assistant pill
                 Surface(
                     shape = RoundedCornerShape(24.dp),
-                    color = White,
-                    shadowElevation = 4.dp
+                    color = if (isDarkMode) com.example.mallar.ui.theme.DarkCard else White,
+                    shadowElevation = if (isDarkMode) 0.dp else 4.dp
                 ) {
                     Row(
                         Modifier.clickable { }.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -814,7 +815,7 @@ fun LogoScanScreen(
                     ) {
                         Icon(Icons.Default.Mic, null, tint = Teal, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Voice Assistant", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Voice Assistant", color = if (isDarkMode) White else TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -843,12 +844,12 @@ fun LogoScanScreen(
                 Spacer(Modifier.height(20.dp))
                 Surface(
                     shape = RoundedCornerShape(20.dp),
-                    color = White.copy(alpha = 0.88f),
-                    shadowElevation = 2.dp
+                    color = if (isDarkMode) com.example.mallar.ui.theme.DarkCard.copy(alpha = 0.88f) else White.copy(alpha = 0.88f),
+                    shadowElevation = if (isDarkMode) 0.dp else 2.dp
                 ) {
                     Text(
                         buildAnnotatedString {
-                            withStyle(SpanStyle(color = TextPrimary, fontSize = 18.sp)) { append("Point your camera at a ") }
+                            withStyle(SpanStyle(color = if (isDarkMode) White else TextPrimary, fontSize = 18.sp)) { append("Point your camera at a ") }
                             withStyle(SpanStyle(color = Teal, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)) { append("store logo") }
                             if (preselectedDestination) {
                                 withStyle(SpanStyle(color = TextSecondary, fontSize = 16.sp)) { append("\nto confirm where you are") }
@@ -875,9 +876,9 @@ fun LogoScanScreen(
                 if (preselectedDestination && NavigationState.selectedPlace != null) {
                     val destPlace = NavigationState.selectedPlace!!
                     Surface(
-                        Modifier.fillMaxWidth().height(54.dp).shadow(8.dp, RoundedCornerShape(27.dp)),
+                        Modifier.fillMaxWidth().height(54.dp).shadow(if (isDarkMode) 0.dp else 8.dp, RoundedCornerShape(27.dp)),
                         RoundedCornerShape(27.dp),
-                        color = White
+                        color = if (isDarkMode) com.example.mallar.ui.theme.DarkCard else White
                     ) {
                         Row(
                             Modifier.fillMaxSize().padding(horizontal = 18.dp),
@@ -886,17 +887,17 @@ fun LogoScanScreen(
                             Icon(Icons.Filled.LocationOn, null, tint = Teal, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("Going to", color = TextSecondary, fontSize = 11.sp)
-                                Text(destPlace.brand, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                                Text("Going to", color = if (isDarkMode) White.copy(0.7f) else TextSecondary, fontSize = 11.sp)
+                                Text(destPlace.brand, color = if (isDarkMode) White else TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
                 } else {
                     Surface(
-                        Modifier.fillMaxWidth().height(54.dp).shadow(8.dp, RoundedCornerShape(27.dp))
+                        Modifier.fillMaxWidth().height(54.dp).shadow(if (isDarkMode) 0.dp else 8.dp, RoundedCornerShape(27.dp))
                             .clickable { startPlace = NavigationState.startPlace; searchQuery = ""; flow = ScreenFlow.PICK_DESTINATION },
                         RoundedCornerShape(27.dp),
-                        color = White
+                        color = if (isDarkMode) com.example.mallar.ui.theme.DarkCard else White
                     ) {
                         Row(Modifier.fillMaxSize().padding(horizontal = 18.dp),
                             verticalAlignment = Alignment.CenterVertically) {
@@ -913,9 +914,9 @@ fun LogoScanScreen(
 
                 // 3 buttons panel
                 Surface(
-                    Modifier.fillMaxWidth().shadow(6.dp, RoundedCornerShape(24.dp)),
+                    Modifier.fillMaxWidth().shadow(if (isDarkMode) 0.dp else 6.dp, RoundedCornerShape(24.dp)),
                     RoundedCornerShape(24.dp),
-                    color = White
+                    color = if (isDarkMode) com.example.mallar.ui.theme.DarkCard else White
                 ) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 12.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -924,15 +925,15 @@ fun LogoScanScreen(
                         // Ask Me (chat)
                         Column(
                             Modifier.weight(1f).clip(RoundedCornerShape(16.dp))
-                                .background(Color(0xFFF1F5F9))
+                                .background(if (isDarkMode) com.example.mallar.ui.theme.DarkSurface else Color(0xFFF1F5F9))
                                 .clickable { showChatBot = true }
                                 .padding(vertical = 14.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Icon(Icons.Default.SmartToy, null, tint = Teal, modifier = Modifier.size(28.dp))
                             Spacer(Modifier.height(6.dp))
-                            Text("Ask Me", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Text("Get help", color = TextSecondary, fontSize = 11.sp)
+                            Text("Ask Me", color = if (isDarkMode) White else TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Get help", color = if (isDarkMode) White.copy(0.7f) else TextSecondary, fontSize = 11.sp)
                         }
 
                         Spacer(Modifier.width(8.dp))
@@ -970,7 +971,7 @@ fun LogoScanScreen(
                                     logoDetector == null -> "Loading scanner…"
                                     else                 -> "Scan Logo"
                                 },
-                                color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold
+                                color = if (isDarkMode) White else TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold
                             )
                         }
 
@@ -980,22 +981,22 @@ fun LogoScanScreen(
                         val voiceActive = voiceUiState.status != VoiceAssistantStatus.IDLE
                         Column(
                             Modifier.weight(1f).clip(RoundedCornerShape(16.dp))
-                                .background(if (voiceActive) Teal.copy(0.12f) else Color(0xFFF1F5F9))
+                                .background(if (voiceActive) Teal.copy(0.12f) else if (isDarkMode) com.example.mallar.ui.theme.DarkSurface else Color(0xFFF1F5F9))
                                 .clickable { showVoiceAssistant = true }
                                 .padding(vertical = 14.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Icon(
-                                imageVector = if (voiceUiState.status == VoiceAssistantStatus.LISTENING)
+                                imageVector = if (voiceUiState.status == com.example.mallar.voice.VoiceAssistantStatus.LISTENING)
                                     Icons.Default.MicOff else Icons.Default.Mic,
                                 contentDescription = null,
-                                tint = if (voiceActive) Teal else Teal,
+                                tint = Teal,
                                 modifier = Modifier.size(28.dp)
                             )
                             Spacer(Modifier.height(6.dp))
-                            Text("Voice", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Text("Assistant", color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                            Text("Speak & Navigate", color = TextSecondary, fontSize = 10.sp)
+                            Text("Voice", color = if (isDarkMode) White else TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Assistant", color = if (isDarkMode) White else TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Speak & Navigate", color = if (isDarkMode) White.copy(0.7f) else TextSecondary, fontSize = 10.sp)
                         }
                     }
                 }
